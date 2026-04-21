@@ -53,26 +53,19 @@ export async function POST(request: Request) {
   const payload = (await backendResponse.json()) as {
     answer?: unknown;
     reasoning?: unknown;
-    citations?: Array<{ citation_id?: unknown; page_number?: unknown; score?: unknown }>;
+    citations?: unknown;
+    reasoning_steps?: unknown;
   };
 
   const answer = typeof payload.answer === "string" ? payload.answer : "";
   const reasoning = typeof payload.reasoning === "string" ? payload.reasoning : "";
-  const citationLabels =
-    payload.citations?.map((citation) => {
-      const citationId = typeof citation.citation_id === "number" ? citation.citation_id : null;
-      const pageNumber = typeof citation.page_number === "number" ? citation.page_number : null;
-      const score = typeof citation.score === "number" ? citation.score : null;
-
-      const idPart = citationId ? `[${citationId}]` : "[?]";
-      const pagePart = pageNumber ? `p.${pageNumber}` : "p.?";
-      const scorePart = score !== null ? `${Math.round(score * 100)}%` : "n/a";
-      return `${idPart} ${pagePart} (${scorePart})`;
-    }) ?? [];
+  const citations = Array.isArray(payload.citations) ? payload.citations : [];
+  const reasoningSteps = Array.isArray(payload.reasoning_steps) ? payload.reasoning_steps : [];
 
   return NextResponse.json({
     answer,
     reasoning,
-    citations: citationLabels,
+    citations,
+    reasoning_steps: reasoningSteps,
   });
 }

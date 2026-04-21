@@ -1,5 +1,7 @@
 import { ArrowUp, Bot, CheckCircle2, ChevronDown, Square, UserRound } from "lucide-react";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { ChatComposerInput } from "@/components/rag/chat/chat-composer-input";
 import { ChatVoiceDictation } from "@/components/rag/chat/chat-voice-dictation";
@@ -7,6 +9,37 @@ import type { ChatPanelProps, Message } from "@/components/rag/chat/types";
 import { Button } from "@/components/ui/button";
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 72;
+
+function getCitationFilename(pdfLinkWithPage: string, fallback: string): string {
+  if (!pdfLinkWithPage) {
+    return fallback;
+  }
+  const withoutHash = pdfLinkWithPage.split("#")[0] ?? "";
+  const withoutQuery = withoutHash.split("?")[0] ?? "";
+  const segments = withoutQuery.split("/").filter(Boolean);
+  const lastSegment = segments[segments.length - 1];
+  if (!lastSegment) {
+    return fallback;
+  }
+  return decodeURIComponent(lastSegment);
+}
+
+function AssistantMarkdown({ content }: { content: string }) {
+  return (
+    <div className="text-sm leading-6 whitespace-pre-wrap [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-6 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ node: _node, ...props }) => (
+            <a {...props} target="_blank" rel="noreferrer noopener" className="underline underline-offset-2" />
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
 
 export function ChatPanel({
   messages,
@@ -140,24 +173,73 @@ export function ChatPanel({
                     : "bg-card text-card-foreground"
                 }`}
               >
-                <p className="whitespace-pre-wrap text-sm leading-6">
-                  {message.content}
-                  {message.role === "assistant" && message.isStreaming ? (
-                    <span className="ml-0.5 inline-block w-2 animate-pulse align-text-bottom text-primary" aria-hidden="true">
-                      ▍
-                    </span>
-                  ) : null}
-                </p>
+                {message.role === "assistant" ? (
+                  <div className="relative">
+                    <AssistantMarkdown content={message.content} />
+                    {message.isStreaming ? (
+                      <span className="ml-0.5 inline-block w-2 animate-pulse align-text-bottom text-primary" aria-hidden="true">
+                        ▍
+                      </span>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
+                )}
+                {message.reasoningSteps && message.reasoningSteps.length > 0 ? (
+                  <div className="mt-3 space-y-2 rounded-md border bg-muted/40 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Reasoning trace
+                    </p>
+                    {message.reasoningSteps.map((step) => (
+                      <div key={`${message.id}-step-${step.step}`} className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
+                        <span
+                          className={`mt-1 inline-block size-2 rounded-full ${
+                            step.status === "completed"
+                              ? "bg-emerald-500"
+                              : step.status === "in_progress"
+                                ? "animate-pulse bg-blue-500"
+                                : "bg-muted-foreground/40"
+                          }`}
+                          aria-hidden="true"
+                        />
+                        <span className="font-medium text-foreground">
+                          Step {step.step}: {step.title}
+                        </span>
+                        {" - "}
+                        {step.detail}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 {message.citations ? (
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {message.citations.map((citation) => (
-                      <span
-                        key={citation}
-                        className="rounded-md border bg-background px-2 py-1 text-xs text-muted-foreground"
-                      >
-                        {citation}
-                      </span>
-                    ))}
+                    {message.citations.map((citation) => {
+                      const sourceName = citation.sourceFilename
+                        ? citation.sourceFilename
+                        : getCitationFilename(citation.pdfLinkWithPage, citation.documentId);
+                      const label = `[${citation.citationId ?? "?"}] ${sourceName} ${
+                        citation.pageNumber ? `(p.${citation.pageNumber})` : ""
+                      }`;
+                      const key = `${message.id}-${citation.citationId ?? "unknown"}-${citation.pageNumber ?? "unknown"}`;
+                      if (!citation.pdfLinkWithPage) {
+                        return (
+                          <span key={key} className="rounded-md border bg-background px-2 py-1 text-xs text-muted-foreground">
+                            {label}
+                          </span>
+                        );
+                      }
+                      return (
+                        <a
+                          key={key}
+                          href={citation.pdfLinkWithPage}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="rounded-md border bg-background px-2 py-1 text-xs text-muted-foreground transition hover:border-ring hover:text-foreground"
+                        >
+                          {label}
+                        </a>
+                      );
+                    })}
                   </div>
                 ) : null}
               </div>

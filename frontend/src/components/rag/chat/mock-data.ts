@@ -69,21 +69,7 @@ export const starterMessages: Message[] = [
   {
     id: "m1",
     role: "assistant",
-    content:
-      "Upload a document, then ask focused questions. I will answer with grounded context, source snippets, and confidence notes.",
-    citations: ["Supported: PDF, DOCX, TXT, CSV"],
-  },
-  {
-    id: "m2",
-    role: "user",
-    content: "What are the vendor security obligations in this policy?",
-  },
-  {
-    id: "m3",
-    role: "assistant",
-    content:
-      "The policy requires annual risk reviews, incident notification within 72 hours, encryption for stored customer data, and evidence of access control audits before renewal.",
-    citations: ["security-policy.pdf, page 4", "security-policy.pdf, page 9"],
+    content: "Upload a document and ask a question to get started.",
   },
 ];
 

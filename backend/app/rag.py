@@ -45,10 +45,16 @@ class RAGService:
         graph_state = await self.query_graph.ainvoke(
             {"question": question, "document_id": document_id}
         )
+        reasoning_steps = self._build_reasoning_steps(
+            question=question,
+            citations=graph_state["citations"],
+            llm_reasoning=graph_state["reasoning"],
+        )
         return {
             "answer": graph_state["answer"],
             "reasoning": graph_state["reasoning"],
             "citations": graph_state["citations"],
+            "reasoning_steps": reasoning_steps,
         }
 
     def _build_query_graph(self):
@@ -70,3 +76,39 @@ class RAGService:
     async def _generate_answer_node(self, state: RAGState) -> RAGState:
         result = await self.llm_engine.ask(question=state["question"], context=state["context"])
         return {"answer": result["answer"], "reasoning": result["reasoning"]}
+
+    def _build_reasoning_steps(
+        self,
+        question: str,
+        citations: list[dict[str, Any]],
+        llm_reasoning: str,
+    ) -> list[dict[str, Any]]:
+        unique_pages = sorted({citation["page_number"] for citation in citations})
+        page_summary = ", ".join(str(page) for page in unique_pages) if unique_pages else "none"
+        return [
+            {
+                "step": 1,
+                "title": "Question received",
+                "detail": f"Captured your prompt and prepared retrieval query: '{question}'.",
+            },
+            {
+                "step": 2,
+                "title": "Document chunks searched",
+                "detail": (
+                    "Ran hybrid retrieval (dense + keyword + lexical scoring) over indexed "
+                    "chunks in the uploaded document."
+                ),
+            },
+            {
+                "step": 3,
+                "title": "Evidence ranked",
+                "detail": (
+                    f"Selected top {len(citations)} citation chunks from pages: {page_summary}."
+                ),
+            },
+            {
+                "step": 4,
+                "title": "Answer synthesized",
+                "detail": llm_reasoning or "Generated final answer grounded only in retrieved citations.",
+            },
+        ]

@@ -55,6 +55,7 @@ class RAGIngestionEngine:
             file_path=stored_path,
             doc_id=doc_id,
             file_url=f"/files/{stored_name}",
+            source_filename=file.filename or stored_name,
         )
         if not chunks:
             raise ValueError("Could not extract text from the uploaded file.")
@@ -74,7 +75,7 @@ class RAGIngestionEngine:
         }
 
     def _extract_file_chunks(
-        self, file_path: Path, doc_id: str, file_url: str
+        self, file_path: Path, doc_id: str, file_url: str, source_filename: str
     ) -> list[dict[str, Any]]:
         elements = partition(filename=str(file_path))
         chunks: list[dict[str, Any]] = []
@@ -97,6 +98,7 @@ class RAGIngestionEngine:
                         "content": chunk,
                         "metadata": {
                             "doc_id": doc_id,
+                            "source_filename": source_filename,
                             "page_number": int(page_number),
                             "chunk_index": chunk_index,
                             "pdf_url": file_url,

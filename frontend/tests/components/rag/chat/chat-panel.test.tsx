@@ -27,7 +27,22 @@ import { ChatPanel } from "@/components/rag/chat/chat-panel";
 import type { Message } from "@/components/rag/chat/types";
 
 const baseMessages: Message[] = [
-  { id: "m1", role: "assistant", content: "Hello there", citations: ["doc.pdf"] },
+  {
+    id: "m1",
+    role: "assistant",
+    content: "Hello there",
+    citations: [
+      {
+        citationId: 1,
+        documentId: "doc-1",
+        sourceFilename: "doc.pdf",
+        pageNumber: 1,
+        pdfLinkWithPage: "",
+        content: "citation excerpt",
+        score: 0.95,
+      },
+    ],
+  },
   { id: "m2", role: "user", content: "What do you mean?" },
 ];
 
@@ -51,7 +66,25 @@ describe("ChatPanel", () => {
     renderPanel();
     expect(screen.getByText("Hello there")).toBeInTheDocument();
     expect(screen.getByText("What do you mean?")).toBeInTheDocument();
-    expect(screen.getByText("doc.pdf")).toBeInTheDocument();
+    expect(screen.getByText(/doc\.pdf/)).toBeInTheDocument();
+  });
+
+  it("renders assistant markdown formatting", () => {
+    renderPanel({
+      messages: [
+        {
+          id: "md-1",
+          role: "assistant",
+          content: "This is **bold** and [docs](https://example.com).",
+        },
+      ],
+    });
+
+    expect(screen.getByText("bold")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "docs" })).toHaveAttribute(
+      "href",
+      "https://example.com",
+    );
   });
 
   it("shows a 'Ready' status chip when idle", () => {

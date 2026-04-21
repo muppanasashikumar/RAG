@@ -13,9 +13,27 @@ export type Message = {
   id: string;
   role: "assistant" | "user";
   content: string;
-  citations?: string[];
+  citations?: Citation[];
+  reasoningSteps?: ReasoningStep[];
   /** Assistant message is still receiving streamed tokens */
   isStreaming?: boolean;
+};
+
+export type Citation = {
+  citationId: number | null;
+  documentId: string;
+  sourceFilename: string;
+  pageNumber: number | null;
+  pdfLinkWithPage: string;
+  content: string;
+  score: number | null;
+};
+
+export type ReasoningStep = {
+  step: number;
+  title: string;
+  detail: string;
+  status?: "pending" | "in_progress" | "completed";
 };
 
 export type ChatPanelProps = {

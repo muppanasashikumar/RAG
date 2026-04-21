@@ -53,6 +53,7 @@ class RAGRetrievalEngine:
                 {
                     "citation_id": idx,
                     "document_id": metadata["doc_id"],
+                    "source_filename": metadata.get("source_filename", metadata["doc_id"]),
                     "page_number": page,
                     "pdf_link_with_page": f"{pdf_url}#page={page}",
                     "content": content,
