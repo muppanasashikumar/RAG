@@ -20,6 +20,10 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function toRecentTimestampLabel() {
+  return new Date().toISOString();
+}
+
 const BACKEND_API_URL =
   process.env.NEXT_PUBLIC_BACKEND_API_URL?.trim() || "http://localhost:8000";
 const DEFAULT_PROCESSING_STEPS: Array<Pick<ReasoningStep, "step" | "title" | "detail">> = [
@@ -78,6 +82,7 @@ type ChatState = {
   setPrompt: (prompt: string) => void;
   stopStreaming: () => void;
   newChat: () => void;
+  loadConversation: (chatId: string) => Promise<void>;
   submitPrompt: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   dispose: () => void;
 };
@@ -119,6 +124,115 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ messages: [] });
   },
 
+  loadConversation: async (chatId) => {
+    if (!chatId || chatId === "new") {
+      set({ messages: [] });
+      return;
+    }
+    try {
+      const response = await fetch(
+        `${BACKEND_API_URL}/api/v1/rag/chats/${encodeURIComponent(chatId)}/messages`,
+      );
+      if (!response.ok) {
+        throw new Error("Failed to load conversation");
+      }
+      const payload = (await response.json()) as {
+        messages?: Array<{
+          role?: unknown;
+          content?: unknown;
+          citations?: Array<{
+            citation_id?: unknown;
+            document_id?: unknown;
+            source_filename?: unknown;
+            page_number?: unknown;
+            pdf_link_with_page?: unknown;
+            content?: unknown;
+            score?: unknown;
+          }> | unknown;
+        }>;
+      };
+      const history: Message[] = Array.isArray(payload.messages)
+        ? payload.messages
+            .map((entry) => {
+              if (!entry || typeof entry !== "object") {
+                return null;
+              }
+              const role = entry.role === "user" ? "user" : entry.role === "assistant" ? "assistant" : null;
+              const content = typeof entry.content === "string" ? entry.content : "";
+              if (!role || !content) {
+                return null;
+              }
+              const citations: Citation[] | undefined =
+                role === "assistant" && Array.isArray(entry.citations)
+                  ? entry.citations.map((citation) => {
+                      if (!citation || typeof citation !== "object") {
+                        return {
+                          citationId: null,
+                          documentId: "unknown",
+                          sourceFilename: "unknown",
+                          pageNumber: null,
+                          pdfLinkWithPage: "",
+                          content: "",
+                          score: null,
+                        };
+                      }
+                      const citationId: number | null =
+                        "citation_id" in citation && typeof citation.citation_id === "number"
+                          ? citation.citation_id
+                          : null;
+                      const pageNumber: number | null =
+                        "page_number" in citation && typeof citation.page_number === "number"
+                          ? citation.page_number
+                          : null;
+                      const score: number | null =
+                        "score" in citation && typeof citation.score === "number"
+                          ? citation.score
+                          : null;
+                      const documentId =
+                        "document_id" in citation && typeof citation.document_id === "string"
+                          ? citation.document_id
+                          : "unknown";
+                      const sourceFilename =
+                        "source_filename" in citation && typeof citation.source_filename === "string"
+                          ? citation.source_filename
+                          : documentId;
+                      const pdfLinkWithPage =
+                        "pdf_link_with_page" in citation && typeof citation.pdf_link_with_page === "string"
+                          ? toAbsoluteDocumentUrl(citation.pdf_link_with_page)
+                          : "";
+                      const citationContent =
+                        "content" in citation && typeof citation.content === "string"
+                          ? citation.content
+                          : "";
+                      return {
+                        citationId,
+                        documentId,
+                        sourceFilename: resolveDisplayFilename(sourceFilename, documentId, sourceFilename),
+                        pageNumber,
+                        pdfLinkWithPage,
+                        content: citationContent,
+                        score,
+                      };
+                    })
+                  : undefined;
+              return { id: uuidv4(), role, content, citations } satisfies Message;
+            })
+            .filter((message): message is Message => message !== null)
+        : [];
+      set({ messages: history });
+    } catch {
+      set({
+        messages: [
+          {
+            id: uuidv4(),
+            role: "assistant",
+            content: "Unable to load this conversation right now.",
+          },
+        ],
+      });
+    }
+  },
+
   submitPrompt: async (event) => {
     event.preventDefault();
 
@@ -147,6 +261,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const userId = uuidv4();
     const assistantId = uuidv4();
     const fallbackCitation = uploadedFile.name || uploadedFileName || "No document selected";
+    const activeChat = useSidebarStore.getState().activeChat;
+
+    const resolvedChatId = activeChat.id === "new" ? `chat-${userId}` : activeChat.id;
+    useSidebarStore.getState().upsertRecentChat({
+      id: resolvedChatId,
+      title: userContent.length > 64 ? `${userContent.slice(0, 64).trimEnd()}...` : userContent,
+      source: uploadedFile.name || uploadedFileName || "No document uploaded",
+      updatedAt: toRecentTimestampLabel(),
+      status: "ready",
+      messages: Math.max(activeChat.messages + 1, 1),
+    });
 
     set({ prompt: "" });
     set((s) => ({
@@ -194,6 +319,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const formData = new FormData();
       formData.append("question", userContent);
       formData.append("file", uploadedFile, uploadedFile.name);
+      formData.append("chat_id", resolvedChatId);
 
       const response = await fetch(`${BACKEND_API_URL}/api/v1/rag/query`, {
         method: "POST",

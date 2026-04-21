@@ -1,15 +1,34 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { chats } from "@/components/rag";
+import type { Chat } from "@/components/rag/chat/types";
 import { useSidebarState } from "@/hooks/use-sidebar-state";
 import { useSidebarStore } from "@/stores/sidebar-store";
 
 const initial = useSidebarStore.getState();
+const chats: Chat[] = [
+  {
+    id: "policy",
+    title: "Vendor security policy review",
+    source: "security-policy.pdf",
+    updatedAt: "2026-04-21T00:00:00.000Z",
+    status: "ready",
+    messages: 18,
+  },
+  {
+    id: "review",
+    title: "Vendor DPA review",
+    source: "vendor-dpa.pdf",
+    updatedAt: "2026-04-20T00:00:00.000Z",
+    status: "review",
+    messages: 4,
+  },
+];
 
 describe("useSidebarState", () => {
   beforeEach(() => {
     useSidebarStore.setState(initial, true);
+    useSidebarStore.setState({ recentChats: chats, activeChat: chats[0], isHydrated: true });
   });
 
   it("exposes sidebar store state and actions", () => {

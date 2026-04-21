@@ -1,13 +1,32 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { chats } from "@/components/rag";
+import type { Chat } from "@/components/rag/chat/types";
 import { getFilteredChats, useSidebarStore } from "@/stores/sidebar-store";
 
 const initialSidebarState = useSidebarStore.getState();
+const chats: Chat[] = [
+  {
+    id: "policy",
+    title: "Vendor security policy review",
+    source: "security-policy.pdf",
+    updatedAt: "2026-04-21T00:00:00.000Z",
+    status: "ready",
+    messages: 18,
+  },
+  {
+    id: "onboarding",
+    title: "Employee handbook Q&A",
+    source: "handbook-2026.pdf",
+    updatedAt: "2026-04-20T00:00:00.000Z",
+    status: "indexing",
+    messages: 6,
+  },
+];
 
 describe("useSidebarStore", () => {
   beforeEach(() => {
     useSidebarStore.setState(initialSidebarState, true);
+    useSidebarStore.setState({ recentChats: chats, activeChat: chats[0] });
   });
 
   it("hydrates with the first chat as active and no query", () => {
@@ -39,11 +58,11 @@ describe("useSidebarStore", () => {
 
 describe("getFilteredChats", () => {
   it("returns every chat for an empty query", () => {
-    expect(getFilteredChats("")).toHaveLength(chats.length);
+    expect(getFilteredChats("", chats)).toHaveLength(chats.length);
   });
 
   it("matches chat titles case-insensitively", () => {
-    const result = getFilteredChats("VENDOR");
+    const result = getFilteredChats("VENDOR", chats);
     expect(result.length).toBeGreaterThan(0);
     expect(
       result.every((chat) =>
@@ -53,12 +72,12 @@ describe("getFilteredChats", () => {
   });
 
   it("matches on the source filename as well", () => {
-    const result = getFilteredChats("handbook-2026.pdf");
+    const result = getFilteredChats("handbook-2026.pdf", chats);
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("onboarding");
   });
 
   it("returns an empty array when nothing matches", () => {
-    expect(getFilteredChats("zzz-definitely-not-a-real-chat-zzz")).toEqual([]);
+    expect(getFilteredChats("zzz-definitely-not-a-real-chat-zzz", chats)).toEqual([]);
   });
 });

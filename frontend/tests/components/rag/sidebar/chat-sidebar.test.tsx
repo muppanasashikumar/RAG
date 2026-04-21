@@ -55,6 +55,8 @@ function renderSidebar(overrides: Partial<Parameters<typeof ChatSidebar>[0]> = {
     onQueryChange: vi.fn(),
     activeChat: chat,
     filteredChats: [chat],
+    hasMoreRecents: false,
+    onLoadMoreRecents: vi.fn(),
     onSelectChat: vi.fn(),
     onNewChat: vi.fn(),
     onToggleSidebar: vi.fn(),
@@ -86,7 +88,7 @@ describe("ChatSidebar", () => {
   it("shows the 'N / total' summary when only a page is visible", () => {
     const chats = makeChats(30);
     renderSidebar({ filteredChats: chats, activeChat: chats[0] });
-    expect(screen.getByText("14 / 30")).toBeInTheDocument();
+    expect(screen.getByText("30")).toBeInTheDocument();
   });
 
   it("collapsed mode replaces the search+list with the recents popover trigger and hides the brand", () => {

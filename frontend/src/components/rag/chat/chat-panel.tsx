@@ -43,11 +43,9 @@ function AssistantMarkdown({ content }: { content: string }) {
 
 export function ChatPanel({
   messages,
-  insights,
   prompt,
   isReplyStreaming,
   onPromptChange,
-  onInsightClick,
   onSubmit,
   onStopStreaming,
 }: ChatPanelProps) {
@@ -270,19 +268,6 @@ export function ChatPanel({
       </div>
 
       <div className="shrink-0 border-t p-4">
-        <div className="mb-3 flex flex-wrap gap-2">
-          {insights.map((insight) => (
-            <button
-              key={insight}
-              type="button"
-              onClick={() => onInsightClick(insight)}
-              className="rounded-md border bg-card px-3 py-1.5 text-xs font-medium transition hover:border-ring hover:bg-muted"
-            >
-              {insight}
-            </button>
-          ))}
-        </div>
-
         <form onSubmit={onSubmit} className="flex flex-col gap-2">
           <ChatVoiceDictation
             prompt={prompt}

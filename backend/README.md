@@ -20,6 +20,7 @@ Backend is available at [http://localhost:8000](http://localhost:8000) and docs 
 
 - `question` (text)
 - `file` (PDF)
+- `chat_id` (optional text, used to append the turn to an existing conversation)
 
 It ingests the PDF, chunks by page text, builds embeddings, stores vectors in ChromaDB, retrieves
 top matches, and executes a LangGraph flow (`retrieve_context -> generate_answer`) using an
@@ -60,6 +61,11 @@ Response now includes:
 - `answer`: multilingual answer with citation markers (`[1]`, `[2]`, ...)
 - `reasoning`: concise evidence-grounded rationale
 - `citations`: page number, pdf link with page anchor, and supporting chunk content
+
+## Recent chats endpoint
+
+`GET /api/v1/rag/chats?limit=20&offset=0` returns paginated recent conversations from
+SQLite (`vector_db/chat_history.sqlite3`) for infinite-scroll UIs.
 
 ## Lint and format
 

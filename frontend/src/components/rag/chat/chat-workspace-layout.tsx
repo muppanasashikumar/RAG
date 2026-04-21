@@ -10,6 +10,8 @@ export function ChatWorkspaceLayout({
   onQueryChange,
   activeChat,
   filteredChats,
+  hasMoreRecents,
+  onLoadMoreRecents,
   onSelectChat,
   onNewChat,
   onToggleSidebar,
@@ -28,6 +30,8 @@ export function ChatWorkspaceLayout({
           onQueryChange={onQueryChange}
           activeChat={activeChat}
           filteredChats={filteredChats}
+          hasMoreRecents={hasMoreRecents}
+          onLoadMoreRecents={onLoadMoreRecents}
           onSelectChat={onSelectChat}
           onNewChat={onNewChat}
           onToggleSidebar={onToggleSidebar}

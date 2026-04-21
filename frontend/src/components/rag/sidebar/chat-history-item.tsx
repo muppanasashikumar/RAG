@@ -10,6 +10,40 @@ type ChatHistoryItemProps = {
   onSelect: (chat: Chat) => void;
 };
 
+function formatRelativeUpdatedAt(updatedAt: string): string {
+  const timestamp = Date.parse(updatedAt);
+  if (Number.isNaN(timestamp)) {
+    return updatedAt;
+  }
+
+  const deltaMs = Date.now() - timestamp;
+  if (deltaMs < 0) {
+    return "Now";
+  }
+
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+
+  if (deltaMs < minute) {
+    return "Now";
+  }
+  if (deltaMs < hour) {
+    return `${Math.floor(deltaMs / minute)} min ago`;
+  }
+  if (deltaMs < day) {
+    return `${Math.floor(deltaMs / hour)} hr ago`;
+  }
+  if (deltaMs < 7 * day) {
+    return `${Math.floor(deltaMs / day)} day ago`;
+  }
+
+  return new Date(timestamp).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
 export function ChatHistoryItem({ chat, isActive, compact = false, onSelect }: ChatHistoryItemProps) {
   return (
     <button
@@ -28,7 +62,7 @@ export function ChatHistoryItem({ chat, isActive, compact = false, onSelect }: C
             {chat.source}
           </p>
         </div>
-        <span className="shrink-0 text-xs text-muted-foreground">{chat.updatedAt}</span>
+        <span className="shrink-0 text-xs text-muted-foreground">{formatRelativeUpdatedAt(chat.updatedAt)}</span>
       </div>
       <div className={`${compact ? "mt-2" : "mt-3"} flex items-center justify-between text-xs text-muted-foreground`}>
         <span className="flex items-center gap-1.5">

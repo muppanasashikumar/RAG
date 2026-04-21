@@ -8,16 +8,14 @@ import { ChatRecentsPopover } from "./chat-recents-popover";
 import { ChatSidebarFooter } from "./chat-sidebar-footer";
 import { ChatSearchInput } from "./chat-search-input";
 import { ChatHistoryList } from "./chat-history-list";
-
-
-const RECENTS_PAGE_SIZE = 14;
-
 export function ChatSidebar({
   isSidebarCollapsed,
   query,
   onQueryChange,
   activeChat,
   filteredChats,
+  hasMoreRecents,
+  onLoadMoreRecents,
   onSelectChat,
   onNewChat,
   onToggleSidebar,
@@ -25,30 +23,16 @@ export function ChatSidebar({
   const { user } = useUser();
   const popoverSearchRef = useRef<HTMLInputElement>(null);
   const [recentsMenuOpen, setRecentsMenuOpen] = useState(false);
-  const [visibleCount, setVisibleCount] = useState(() =>
-    Math.min(RECENTS_PAGE_SIZE, filteredChats.length),
-  );
-
-  const clampedVisible = Math.min(visibleCount, filteredChats.length);
-  const visibleChats = filteredChats.slice(0, clampedVisible);
-  const hasMoreRecents = clampedVisible < filteredChats.length;
+  const visibleChats = filteredChats;
   const userLabel = user?.fullName ?? user?.primaryEmailAddress?.emailAddress ?? "Signed in user";
   const userInitial =
     user?.firstName?.[0] ??
     user?.fullName?.[0] ??
     user?.primaryEmailAddress?.emailAddress?.[0] ??
     "U";
-  const appendRecentsPage = useCallback(() => {
-    setVisibleCount((current) => Math.min(current + RECENTS_PAGE_SIZE, filteredChats.length));
-  }, [filteredChats.length]);
-
-  const handleQueryChange = useCallback(
-    (nextQuery: string) => {
-      setVisibleCount(Math.min(RECENTS_PAGE_SIZE, filteredChats.length));
-      onQueryChange(nextQuery);
-    },
-    [filteredChats.length, onQueryChange],
-  );
+  const handleQueryChange = useCallback((nextQuery: string) => {
+    onQueryChange(nextQuery);
+  }, [onQueryChange]);
 
   useEffect(() => {
     if (!recentsMenuOpen || !isSidebarCollapsed) {
@@ -81,7 +65,7 @@ export function ChatSidebar({
               searchInputRef={popoverSearchRef}
               onOpenChange={setRecentsMenuOpen}
               onQueryChange={handleQueryChange}
-              onLoadMore={appendRecentsPage}
+              onLoadMore={onLoadMoreRecents}
               onSelectChat={(chat) => {
                 onSelectChat(chat);
                 setRecentsMenuOpen(false);
@@ -128,7 +112,7 @@ export function ChatSidebar({
                       No chats match your search.
                     </p>
                   }
-                  onLoadMore={appendRecentsPage}
+                  onLoadMore={onLoadMoreRecents}
                   onSelectChat={onSelectChat}
                 />
               </div>

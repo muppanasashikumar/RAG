@@ -24,3 +24,28 @@ class RAGResponse(BaseModel):
     reasoning: str
     citations: list[Citation]
     reasoning_steps: list[ReasoningStep]
+
+
+class ChatSummary(BaseModel):
+    id: str
+    title: str
+    source: str
+    updated_at: str
+    status: str
+    messages: int
+
+
+class ChatListResponse(BaseModel):
+    chats: list[ChatSummary]
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+    citations: list[Citation] = Field(default_factory=list)
+    created_at: str
+
+
+class ChatMessagesResponse(BaseModel):
+    chat_id: str
+    messages: list[ChatMessage]

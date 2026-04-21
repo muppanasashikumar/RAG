@@ -13,6 +13,7 @@ export function useChatState() {
       uploadedFile: s.uploadedFile,
       uploadedFileName: s.uploadedFileName,
       setUploadedFile: s.setUploadedFile,
+      loadConversation: s.loadConversation,
     })),
   );
 }

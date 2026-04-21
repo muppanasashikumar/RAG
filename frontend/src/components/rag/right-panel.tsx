@@ -4,28 +4,10 @@ import Image from "next/image";
 import { useCallback, useState } from "react";
 import { useDropzone, type FileRejection } from "react-dropzone";
 import type { RightPanelProps } from "@/components/rag/chat/types";
-import { Clock3, FileText, ShieldCheck, Sparkles, UploadCloud, X } from "lucide-react";
+import { FileText, UploadCloud, X } from "lucide-react";
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const ACCEPTED_EXTENSIONS = new Set([".pdf", ".doc", ".docx", ".txt", ".csv"]);
-
-const controls = [
-  {
-    title: "Cited answers",
-    description: "Only answer from retrieved context",
-    Icon: ShieldCheck,
-  },
-  {
-    title: "Memory",
-    description: "Use conversation history in this chat",
-    Icon: Clock3,
-  },
-  {
-    title: "Planner",
-    description: "Break complex requests into steps",
-    Icon: Sparkles,
-  },
-];
 
 function formatMaxSize(): string {
   return "50 MB";
@@ -204,22 +186,6 @@ export function RightPanel({ uploadedFile, uploadedFileName, onUploadedFileChang
         </div>
       </div>
 
-      <div className="rounded-lg border bg-background p-5">
-        <p className="font-heading font-semibold">Agent controls</p>
-        <div className="mt-4 space-y-3">
-          {controls.map(({ title, description, Icon }) => (
-            <div key={title} className="rounded-lg border bg-card p-3">
-              <div className="flex gap-3">
-                <Icon className="mt-0.5 size-4 text-muted-foreground" aria-hidden="true" />
-                <div>
-                  <p className="text-sm font-medium">{title}</p>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
     </aside>
   );
 }

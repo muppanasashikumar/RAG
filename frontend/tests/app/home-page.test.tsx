@@ -17,6 +17,11 @@ vi.mock("react-infinite-scroll-component", () => ({
   ),
 }));
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: vi.fn() }),
+  usePathname: () => "/",
+}));
+
 // RightPanel relies on next/image + react-dropzone; we only need to verify it mounts.
 vi.mock("@/components/rag/right-panel", () => ({
   RightPanel: () => <div data-testid="right-panel" />,
@@ -50,10 +55,10 @@ describe("Home page", () => {
     render(<Home />);
     // Sidebar
     expect(screen.getByText("Astra RAG")).toBeInTheDocument();
-    // Header – shows the first chat title from the mock data
+    // Header – default state is a fresh chat
     expect(
       screen.getByRole("heading", { level: 1 }),
-    ).toHaveTextContent(/vendor security policy review/i);
+    ).toHaveTextContent(/untitled document chat/i);
     // Chat panel
     expect(screen.getByText("Document chat")).toBeInTheDocument();
     expect(

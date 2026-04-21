@@ -38,11 +38,9 @@ export type ReasoningStep = {
 
 export type ChatPanelProps = {
   messages: Message[];
-  insights: string[];
   prompt: string;
   isReplyStreaming: boolean;
   onPromptChange: (value: string) => void;
-  onInsightClick: (value: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onStopStreaming: () => void;
 };
@@ -76,6 +74,8 @@ export type ChatSidebarProps = {
   onQueryChange: (value: string) => void;
   activeChat: Chat;
   filteredChats: Chat[];
+  hasMoreRecents: boolean;
+  onLoadMoreRecents: () => void;
   onSelectChat: (chat: Chat) => void;
   onNewChat: () => void;
   onToggleSidebar: () => void;
