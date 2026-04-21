@@ -26,6 +26,44 @@ class RAGResponse(BaseModel):
     reasoning_steps: list[ReasoningStep]
 
 
+class IngestedDocument(BaseModel):
+    document_id: str
+    filename: str
+    pdf_url: str
+    chunks_ingested: int
+    already_indexed: bool
+
+
+class IngestionTask(BaseModel):
+    task_id: str
+    filename: str
+    status: str
+
+
+class BatchIngestResponse(BaseModel):
+    tasks: list[IngestionTask]
+
+
+class IngestionTaskStatusResponse(BaseModel):
+    task_id: str
+    status: str
+    result: IngestedDocument | None = None
+    error: str | None = None
+
+
+class IndexedDocument(BaseModel):
+    document_id: str
+    source_filename: str
+    pdf_url: str
+    chunks: int
+    status: str
+
+
+class IndexedDocumentsResponse(BaseModel):
+    total_documents: int
+    documents: list[IndexedDocument]
+
+
 class ChatSummary(BaseModel):
     id: str
     title: str

@@ -82,9 +82,11 @@ export type ChatSidebarProps = {
 };
 
 export type RightPanelProps = {
-  uploadedFile: File | null;
-  uploadedFileName: string;
-  onUploadedFileChange: (file: File | null) => void;
+  uploadedFiles: File[];
+  uploadedFileNames: string[];
+  isBatchUploading: boolean;
+  onUploadedFilesChange: (files: File[]) => Promise<void>;
+  onClearUploadedFiles: () => void;
 };
 
 export type WorkspaceHeaderProps = {

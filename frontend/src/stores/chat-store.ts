@@ -74,11 +74,13 @@ function resolveDisplayFilename(rawSource: string, documentId: string, fallback:
 }
 
 type ChatState = {
-  uploadedFile: File | null;
-  uploadedFileName: string;
+  uploadedFiles: File[];
+  uploadedFileNames: string[];
+  isBatchUploading: boolean;
   prompt: string;
   messages: Message[];
-  setUploadedFile: (file: File | null) => void;
+  uploadBatchFiles: (files: File[]) => Promise<void>;
+  clearUploadedFiles: () => void;
   setPrompt: (prompt: string) => void;
   stopStreaming: () => void;
   newChat: () => void;
@@ -88,16 +90,43 @@ type ChatState = {
 };
 
 export const useChatStore = create<ChatState>((set, get) => ({
-  uploadedFile: null,
-  uploadedFileName: "security-policy.pdf",
+  uploadedFiles: [],
+  uploadedFileNames: [],
+  isBatchUploading: false,
   prompt: "",
   messages: [],
 
-  setUploadedFile: (uploadedFile) =>
-    set({
-      uploadedFile,
-      uploadedFileName: uploadedFile?.name ?? "",
-    }),
+  uploadBatchFiles: async (files) => {
+    if (files.length === 0) {
+      set({ uploadedFiles: [], uploadedFileNames: [] });
+      return;
+    }
+
+    set({ isBatchUploading: true });
+    try {
+      const formData = new FormData();
+      formData.append("parallelism", "4");
+      for (const file of files) {
+        formData.append("files", file, file.name);
+      }
+      const response = await fetch(`${BACKEND_API_URL}/api/v1/rag/upload-batch`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        throw new Error(detail || `Batch upload failed (${response.status})`);
+      }
+
+      set({
+        uploadedFiles: files,
+        uploadedFileNames: files.map((file) => file.name),
+      });
+    } finally {
+      set({ isBatchUploading: false });
+    }
+  },
+  clearUploadedFiles: () => set({ uploadedFiles: [], uploadedFileNames: [] }),
   setPrompt: (prompt) => set({ prompt }),
 
   stopStreaming: () => {
@@ -112,11 +141,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   newChat: () => {
     abortInFlightStream();
     setStreamController(null);
-    const { uploadedFileName } = get();
+    const { uploadedFileNames } = get();
+    const sourceLabel = uploadedFileNames.length > 0 ? uploadedFileNames[0] : "No document uploaded";
     useSidebarStore.getState().setActiveChat({
       id: "new",
       title: "Untitled document chat",
-      source: uploadedFileName || "No document uploaded",
+      source: sourceLabel,
       updatedAt: "Now",
       status: "ready",
       messages: 0,
@@ -236,7 +266,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   submitPrompt: async (event) => {
     event.preventDefault();
 
-    const { prompt, messages, uploadedFile, uploadedFileName } = get();
+    const { prompt, messages, uploadedFileNames } = get();
     const isReplyStreaming = messages.some((m) => m.role === "assistant" && m.isStreaming);
 
     if (!prompt.trim() || isReplyStreaming) {
@@ -248,26 +278,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     setStreamController(controller);
 
     const userContent = prompt.trim();
-    if (!uploadedFile) {
-      set((s) => ({
-        messages: [
-          ...s.messages,
-          { id: uuidv4(), role: "assistant", content: "Upload a PDF file before asking a question." },
-        ],
-      }));
-      return;
-    }
-
     const userId = uuidv4();
     const assistantId = uuidv4();
-    const fallbackCitation = uploadedFile.name || uploadedFileName || "No document selected";
+    const fallbackCitation = uploadedFileNames[0] || "Indexed documents";
     const activeChat = useSidebarStore.getState().activeChat;
 
     const resolvedChatId = activeChat.id === "new" ? `chat-${userId}` : activeChat.id;
     useSidebarStore.getState().upsertRecentChat({
       id: resolvedChatId,
       title: userContent.length > 64 ? `${userContent.slice(0, 64).trimEnd()}...` : userContent,
-      source: uploadedFile.name || uploadedFileName || "No document uploaded",
+      source: uploadedFileNames[0] || "Indexed documents",
       updatedAt: toRecentTimestampLabel(),
       status: "ready",
       messages: Math.max(activeChat.messages + 1, 1),
@@ -318,7 +338,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const formData = new FormData();
       formData.append("question", userContent);
-      formData.append("file", uploadedFile, uploadedFile.name);
       formData.append("chat_id", resolvedChatId);
 
       const response = await fetch(`${BACKEND_API_URL}/api/v1/rag/query`, {

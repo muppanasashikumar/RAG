@@ -1,7 +1,6 @@
 fastapi
 uvicorn[standard]
 python-multipart
-chromadb
 sentence-transformers
 httpx
 langchain
@@ -10,4 +9,8 @@ langchain-openai
 langchain-ollama
 langgraph
 python-dotenv
-unstructured
+unstructured[pdf]
+motor
+beanie
+celery
+redis

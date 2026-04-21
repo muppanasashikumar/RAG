@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import chromadb
 from fastapi import UploadFile
 from langgraph.graph import END, START, StateGraph
 from sentence_transformers import SentenceTransformer
@@ -16,24 +15,15 @@ from app.rag_settings import RAGSettings, RAGState
 class RAGService:
     def __init__(self, settings: RAGSettings) -> None:
         self.settings = settings
-        self.settings.uploads_dir.mkdir(parents=True, exist_ok=True)
-        self.settings.db_dir.mkdir(parents=True, exist_ok=True)
 
         self.embedder = SentenceTransformer(self.settings.embedding_model)
-        self.chroma_client = chromadb.PersistentClient(path=str(self.settings.db_dir))
-        self.collection = self.chroma_client.get_or_create_collection(
-            name=self.settings.collection_name,
-            metadata={"hnsw:space": "cosine"},
-        )
         self.ingestion_engine = RAGIngestionEngine(
             settings=self.settings,
             embedder=self.embedder,
-            collection=self.collection,
         )
         self.retrieval_engine = RAGRetrievalEngine(
             settings=self.settings,
             embedder=self.embedder,
-            collection=self.collection,
         )
         self.llm_engine = RAGLLMEngine(settings=self.settings)
         self.query_graph = self._build_query_graph()
@@ -109,6 +99,9 @@ class RAGService:
             {
                 "step": 4,
                 "title": "Answer synthesized",
-                "detail": llm_reasoning or "Generated final answer grounded only in retrieved citations.",
+                "detail": (
+                    llm_reasoning
+                    or "Generated final answer grounded only in retrieved citations."
+                ),
             },
         ]

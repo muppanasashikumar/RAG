@@ -29,22 +29,38 @@ function validateSelectedFile(file: File): string | null {
   return null;
 }
 
-export function RightPanel({ uploadedFile, uploadedFileName, onUploadedFileChange }: RightPanelProps) {
+function validateSelectedFiles(files: File[]): string | null {
+  if (files.length === 0) {
+    return "Select at least one file.";
+  }
+  for (const file of files) {
+    const error = validateSelectedFile(file);
+    if (error) {
+      return error;
+    }
+  }
+  return null;
+}
+
+export function RightPanel({
+  uploadedFiles,
+  uploadedFileNames,
+  isBatchUploading,
+  onUploadedFilesChange,
+  onClearUploadedFiles,
+}: RightPanelProps) {
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const hasFiles = uploadedFiles.length > 0 || uploadedFileNames.length > 0;
+  const selectedSummary = uploadedFileNames.length > 0 ? uploadedFileNames.join(", ") : "No documents selected";
 
-  const hasFile = uploadedFile !== null || uploadedFileName.trim().length > 0;
-
-  function clearUploadedFile() {
+  function clearUploadedFiles() {
     setUploadError(null);
-    onUploadedFileChange(null);
+    onClearUploadedFiles();
   }
 
-  const applyFile = useCallback(
-    (file: File | undefined, resetInput?: HTMLInputElement | null) => {
-      if (!file) {
-        return;
-      }
-      const message = validateSelectedFile(file);
+  const applyFiles = useCallback(
+    async (files: File[], resetInput?: HTMLInputElement | null) => {
+      const message = validateSelectedFiles(files);
       if (message) {
         setUploadError(message);
         if (resetInput) {
@@ -53,43 +69,32 @@ export function RightPanel({ uploadedFile, uploadedFileName, onUploadedFileChang
         return;
       }
       setUploadError(null);
-      onUploadedFileChange(file);
+      await onUploadedFilesChange(files);
     },
-    [onUploadedFileChange],
+    [onUploadedFilesChange],
   );
 
   const handleDropAccepted = useCallback(
-    (acceptedFiles: File[]) => {
-      const file = acceptedFiles[0];
-      if (!file) {
-        setUploadError("Drop a single file to upload.");
-        return;
-      }
-      applyFile(file);
+    async (acceptedFiles: File[]) => {
+      await applyFiles(acceptedFiles);
     },
-    [applyFile],
+    [applyFiles],
   );
 
   const handleDropRejected = useCallback((rejections: FileRejection[]) => {
     if (rejections.length === 0) {
-      setUploadError("Drop a single file to upload.");
+      setUploadError("Drop files to upload.");
       return;
     }
-    if (rejections.length > 1) {
-      setUploadError("Drop one file at a time.");
-      return;
-    }
-    const [{ errors }] = rejections;
-    if (errors.some((error) => error.code === "too-many-files")) {
-      setUploadError("Drop one file at a time.");
+    if (rejections.some((rejection) => rejection.errors.some((error) => error.code === "too-many-files"))) {
+      setUploadError("Too many files selected.");
       return;
     }
     setUploadError("Use a supported type: PDF, DOC, DOCX, TXT, or CSV.");
   }, []);
 
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
-    multiple: false,
-    maxFiles: 1,
+    multiple: true,
     noKeyboard: true,
     onDropAccepted: handleDropAccepted,
     onDropRejected: handleDropRejected,
@@ -134,7 +139,7 @@ export function RightPanel({ uploadedFile, uploadedFileName, onUploadedFileChang
           <input {...getInputProps({ id: uploadFieldId })} />
           <UploadCloud className="size-9 text-muted-foreground" aria-hidden="true" />
           <span className="mt-3 text-sm font-medium">
-            {isDragActive ? "Release to upload" : "Drop a file or browse"}
+            {isDragActive ? "Release to upload" : "Drop files or browse"}
           </span>
           <span className="mt-1 text-xs text-muted-foreground">
             PDF, DOC, DOCX, TXT, CSV up to {formatMaxSize()}
@@ -145,9 +150,10 @@ export function RightPanel({ uploadedFile, uploadedFileName, onUploadedFileChang
               event.stopPropagation();
               open();
             }}
+            disabled={isBatchUploading}
             className="mt-3 rounded-md border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition hover:bg-muted"
           >
-            Browse files
+            {isBatchUploading ? "Uploading..." : "Browse files"}
           </button>
         </div>
 
@@ -164,20 +170,20 @@ export function RightPanel({ uploadedFile, uploadedFileName, onUploadedFileChang
             </div>
             <div className="min-w-0 flex-1">
               <p
-                className={`truncate text-sm font-medium ${!hasFile ? "text-muted-foreground" : ""}`}
+                className={`truncate text-sm font-medium ${!hasFiles ? "text-muted-foreground" : ""}`}
               >
-                {hasFile ? uploadedFileName : "No document selected"}
+                {selectedSummary}
               </p>
               <p className="text-xs text-muted-foreground">
-                {hasFile ? "Indexed for this chat" : "Upload a file to ground answers"}
+                {hasFiles ? `${uploadedFileNames.length} document(s) ready for retrieval` : "Upload files to ground answers"}
               </p>
             </div>
-            {hasFile ? (
+            {hasFiles ? (
               <button
                 type="button"
-                onClick={clearUploadedFile}
+                onClick={clearUploadedFiles}
                 className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                aria-label="Remove document"
+                aria-label="Remove documents"
               >
                 <X className="size-4" aria-hidden="true" />
               </button>

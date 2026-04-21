@@ -1,61 +1,51 @@
 from __future__ import annotations
 
-import sqlite3
-import json
-from pathlib import Path
-from threading import Lock
+from datetime import datetime
 from typing import Any
+from urllib.parse import quote_plus, urlsplit, urlunsplit
+
+from beanie import init_beanie
+from pymongo import AsyncMongoClient
+
+from app.db_models import ChatDocument, ChatMessageDocument, RAGChunkDocument
 
 
 class ChatHistoryStore:
-    def __init__(self, db_file: Path) -> None:
-        self.db_file = db_file
-        self.db_file.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = Lock()
-        self._init_db()
+    def __init__(self, mongodb_uri: str, mongodb_database: str) -> None:
+        self.mongodb_uri = mongodb_uri
+        self.mongodb_database = mongodb_database
+        self._client: AsyncMongoClient[dict[str, Any]] | None = None
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_file))
-        conn.row_factory = sqlite3.Row
-        return conn
+    async def initialize(self) -> None:
+        self._client = AsyncMongoClient(self._normalize_mongodb_uri(self.mongodb_uri))
+        database = self._client[self.mongodb_database]
+        await init_beanie(
+            database=database,
+            document_models=[ChatDocument, ChatMessageDocument, RAGChunkDocument],
+        )
 
-    def _init_db(self) -> None:
-        with self._connect() as conn:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS chats (
-                    id TEXT PRIMARY KEY,
-                    title TEXT NOT NULL,
-                    source TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
+    def _normalize_mongodb_uri(self, uri: str) -> str:
+        # Atlas credentials often contain special characters; encode them if needed.
+        parsed = urlsplit(uri)
+        if parsed.scheme not in {"mongodb", "mongodb+srv"} or "@" not in parsed.netloc:
+            return uri
 
-                CREATE TABLE IF NOT EXISTS chat_messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    chat_id TEXT NOT NULL,
-                    role TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    citations_json TEXT,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE
-                );
+        auth_part, host_part = parsed.netloc.rsplit("@", 1)
+        if ":" not in auth_part:
+            return uri
 
-                CREATE INDEX IF NOT EXISTS idx_chats_updated_at ON chats(updated_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON chat_messages(chat_id, created_at);
-                """
-            )
-            columns = {
-                row["name"]
-                for row in conn.execute("PRAGMA table_info(chat_messages)").fetchall()
-            }
-            if "citations_json" not in columns:
-                conn.execute(
-                    "ALTER TABLE chat_messages ADD COLUMN citations_json TEXT"
-                )
+        username, password = auth_part.split(":", 1)
+        encoded_username = quote_plus(username)
+        encoded_password = quote_plus(password)
+        if encoded_username == username and encoded_password == password:
+            return uri
 
-    def save_conversation_turn(
+        safe_netloc = f"{encoded_username}:{encoded_password}@{host_part}"
+        return urlunsplit(
+            (parsed.scheme, safe_netloc, parsed.path, parsed.query, parsed.fragment)
+        )
+
+    async def save_conversation_turn(
         self,
         *,
         chat_id: str,
@@ -66,50 +56,42 @@ class ChatHistoryStore:
         updated_at: str,
     ) -> dict[str, Any]:
         title = question.strip()[:96] or "Untitled chat"
-        with self._lock:
-            with self._connect() as conn:
-                existing = conn.execute(
-                    "SELECT id FROM chats WHERE id = ?",
-                    (chat_id,),
-                ).fetchone()
-                if existing is None:
-                    conn.execute(
-                        """
-                        INSERT INTO chats (id, title, source, status, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        (chat_id, title, source, "ready", updated_at, updated_at),
-                    )
-                else:
-                    conn.execute(
-                        """
-                        UPDATE chats
-                        SET title = ?, source = ?, status = ?, updated_at = ?
-                        WHERE id = ?
-                        """,
-                        (title, source, "ready", updated_at, chat_id),
-                    )
+        timestamp = datetime.fromisoformat(updated_at)
+        existing_chat = await ChatDocument.find_one(ChatDocument.chat_id == chat_id)
+        if existing_chat is None:
+            chat = ChatDocument(
+                chat_id=chat_id,
+                title=title,
+                source=source,
+                status="ready",
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+            await chat.insert()
+        else:
+            existing_chat.title = title
+            existing_chat.source = source
+            existing_chat.status = "ready"
+            existing_chat.updated_at = timestamp
+            await existing_chat.save()
 
-                conn.executemany(
-                    """
-                    INSERT INTO chat_messages (chat_id, role, content, citations_json, created_at)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    [
-                        (chat_id, "user", question, None, updated_at),
-                        (
-                            chat_id,
-                            "assistant",
-                            answer,
-                            json.dumps(citations or []),
-                            updated_at,
-                        ),
-                    ],
-                )
-                message_count = conn.execute(
-                    "SELECT COUNT(*) as c FROM chat_messages WHERE chat_id = ?",
-                    (chat_id,),
-                ).fetchone()
+        await ChatMessageDocument(
+            chat_id=chat_id,
+            role="user",
+            content=question,
+            citations=[],
+            created_at=timestamp,
+        ).insert()
+        await ChatMessageDocument(
+            chat_id=chat_id,
+            role="assistant",
+            content=answer,
+            citations=citations or [],
+            created_at=timestamp,
+        ).insert()
+        message_count = await ChatMessageDocument.find(
+            ChatMessageDocument.chat_id == chat_id
+        ).count()
 
         return {
             "id": chat_id,
@@ -117,53 +99,46 @@ class ChatHistoryStore:
             "source": source,
             "updated_at": updated_at,
             "status": "ready",
-            "messages": int(message_count["c"]) if message_count else 0,
+            "messages": int(message_count),
         }
 
-    def list_chats(self, *, limit: int, offset: int) -> list[dict[str, Any]]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT c.id, c.title, c.source, c.status, c.updated_at, COUNT(m.id) as messages
-                FROM chats c
-                LEFT JOIN chat_messages m ON m.chat_id = c.id
-                GROUP BY c.id
-                ORDER BY c.updated_at DESC
-                LIMIT ? OFFSET ?
-                """,
-                (limit, offset),
-            ).fetchall()
-        return [
-            {
-                "id": row["id"],
-                "title": row["title"],
-                "source": row["source"],
-                "updated_at": row["updated_at"],
-                "status": row["status"],
-                "messages": int(row["messages"] or 0),
-            }
-            for row in rows
-        ]
+    async def list_chats(self, *, limit: int, offset: int) -> list[dict[str, Any]]:
+        chats = (
+            await ChatDocument.find_all()
+            .sort(-ChatDocument.updated_at)
+            .skip(offset)
+            .limit(limit)
+            .to_list()
+        )
+        result: list[dict[str, Any]] = []
+        for chat in chats:
+            messages_count = await ChatMessageDocument.find(
+                ChatMessageDocument.chat_id == chat.chat_id
+            ).count()
+            result.append(
+                {
+                    "id": chat.chat_id,
+                    "title": chat.title,
+                    "source": chat.source,
+                    "updated_at": chat.updated_at.isoformat(),
+                    "status": chat.status,
+                    "messages": int(messages_count),
+                }
+            )
+        return result
 
-    def get_chat_messages(self, chat_id: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT role, content, citations_json, created_at
-                FROM chat_messages
-                WHERE chat_id = ?
-                ORDER BY created_at ASC, id ASC
-                """,
-                (chat_id,),
-            ).fetchall()
+    async def get_chat_messages(self, chat_id: str) -> list[dict[str, Any]]:
+        messages = (
+            await ChatMessageDocument.find(ChatMessageDocument.chat_id == chat_id)
+            .sort(ChatMessageDocument.created_at)
+            .to_list()
+        )
         return [
             {
-                "role": str(row["role"]),
-                "content": str(row["content"]),
-                "citations": json.loads(row["citations_json"])
-                if row["citations_json"]
-                else [],
-                "created_at": str(row["created_at"]),
+                "role": message.role,
+                "content": message.content,
+                "citations": message.citations,
+                "created_at": message.created_at.isoformat(),
             }
-            for row in rows
+            for message in messages
         ]

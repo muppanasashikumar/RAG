@@ -45,9 +45,11 @@ export function RagHomePage({ routeChatId }: RagHomePageProps) {
     messages,
     prompt,
     setPrompt,
-    uploadedFile,
-    uploadedFileName,
-    setUploadedFile,
+    uploadedFiles,
+    uploadedFileNames,
+    isBatchUploading,
+    uploadBatchFiles,
+    clearUploadedFiles,
     loadConversation,
   } = useChatState();
 
@@ -111,9 +113,11 @@ export function RagHomePage({ routeChatId }: RagHomePageProps) {
         onStopStreaming={handleStopStreaming}
       />
       <RightPanel
-        uploadedFile={uploadedFile}
-        uploadedFileName={uploadedFileName}
-        onUploadedFileChange={setUploadedFile}
+        uploadedFiles={uploadedFiles}
+        uploadedFileNames={uploadedFileNames}
+        isBatchUploading={isBatchUploading}
+        onUploadedFilesChange={uploadBatchFiles}
+        onClearUploadedFiles={clearUploadedFiles}
       />
     </ChatWorkspaceLayout>
   );

@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import mimetypes
 import re
 import uuid
-from pathlib import Path
 from typing import Any
 
 from fastapi import UploadFile
 from sentence_transformers import SentenceTransformer
 from unstructured.partition.auto import partition
 
+from app.db_models import RAGChunkDocument
 from app.rag_settings import RAGSettings
 
 
@@ -19,11 +20,9 @@ class RAGIngestionEngine:
         self,
         settings: RAGSettings,
         embedder: SentenceTransformer,
-        collection: Any,
     ) -> None:
         self.settings = settings
         self.embedder = embedder
-        self.collection = collection
 
     async def ingest_document(self, file: UploadFile) -> dict[str, Any]:
         payload = await file.read()
@@ -36,25 +35,21 @@ class RAGIngestionEngine:
         file_hash = hashlib.sha256(payload).hexdigest()
         doc_id = file_hash[:16]
         stored_name = f"{doc_id}{suffix}"
-        stored_path = self.settings.uploads_dir / stored_name
 
-        if not stored_path.exists():
-            stored_path.write_bytes(payload)
-
-        existing = self.collection.get(where={"doc_id": doc_id}, limit=1)
-        if existing.get("ids"):
+        existing = await RAGChunkDocument.find_one(RAGChunkDocument.doc_id == doc_id)
+        if existing is not None:
             return {
                 "document_id": doc_id,
                 "filename": file.filename or stored_name,
-                "pdf_url": f"/files/{stored_name}",
+                "pdf_url": "",
                 "chunks_ingested": 0,
                 "already_indexed": True,
             }
 
         chunks = self._extract_file_chunks(
-            file_path=stored_path,
+            payload=payload,
             doc_id=doc_id,
-            file_url=f"/files/{stored_name}",
+            file_url="",
             source_filename=file.filename or stored_name,
         )
         if not chunks:
@@ -62,22 +57,32 @@ class RAGIngestionEngine:
 
         texts = [item["content"] for item in chunks]
         embeddings = self.embedder.encode(texts, normalize_embeddings=True).tolist()
-        ids = [item["id"] for item in chunks]
-        metadatas = [item["metadata"] for item in chunks]
-
-        self.collection.add(ids=ids, documents=texts, embeddings=embeddings, metadatas=metadatas)
+        documents = [
+            RAGChunkDocument(
+                chunk_id=item["id"],
+                doc_id=item["metadata"]["doc_id"],
+                source_filename=item["metadata"]["source_filename"],
+                page_number=item["metadata"]["page_number"],
+                chunk_index=item["metadata"]["chunk_index"],
+                pdf_url=item["metadata"]["pdf_url"],
+                content=item["content"],
+                embedding=embedding,
+            )
+            for item, embedding in zip(chunks, embeddings, strict=False)
+        ]
+        await RAGChunkDocument.insert_many(documents)
         return {
             "document_id": doc_id,
             "filename": file.filename or stored_name,
-            "pdf_url": f"/files/{stored_name}",
+            "pdf_url": "",
             "chunks_ingested": len(chunks),
             "already_indexed": False,
         }
 
     def _extract_file_chunks(
-        self, file_path: Path, doc_id: str, file_url: str, source_filename: str
+        self, payload: bytes, doc_id: str, file_url: str, source_filename: str
     ) -> list[dict[str, Any]]:
-        elements = partition(filename=str(file_path))
+        elements = partition(file=io.BytesIO(payload), file_filename=source_filename)
         chunks: list[dict[str, Any]] = []
         for element in elements:
             text = (getattr(element, "text", None) or "").strip()

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, TypedDict
 
 from dotenv import load_dotenv
@@ -12,9 +11,6 @@ load_dotenv()
 
 @dataclass(frozen=True)
 class RAGSettings:
-    uploads_dir: Path = Path(os.getenv("RAG_UPLOADS_DIR", "uploads"))
-    db_dir: Path = Path(os.getenv("RAG_VECTOR_DB_DIR", "vector_db"))
-    collection_name: str = os.getenv("RAG_COLLECTION_NAME", "documents")
     chunk_size: int = int(os.getenv("RAG_CHUNK_SIZE", "900"))
     chunk_overlap: int = int(os.getenv("RAG_CHUNK_OVERLAP", "150"))
     semantic_similarity_threshold: float = float(
@@ -38,6 +34,21 @@ class RAGSettings:
     llm_api_key: str | None = os.getenv("RAG_LLM_API_KEY")
     llm_reasoning_effort: str = os.getenv("RAG_LLM_REASONING_EFFORT", "medium")
     llm_timeout_seconds: float = float(os.getenv("RAG_LLM_TIMEOUT_SECONDS", "120"))
+    mongodb_uri: str = os.getenv("RAG_MONGODB_URI", "mongodb://localhost:27017")
+    mongodb_database: str = os.getenv("RAG_MONGODB_DATABASE", "rag_app")
+    mongodb_vector_index_name: str = os.getenv(
+        "RAG_MONGODB_VECTOR_INDEX_NAME", "rag_chunks_vector_index"
+    )
+    mongodb_use_vector_search: bool = (
+        os.getenv("RAG_MONGODB_USE_VECTOR_SEARCH", "false").strip().lower() == "true"
+    )
+    mongodb_vector_num_candidates: int = int(
+        os.getenv("RAG_MONGODB_VECTOR_NUM_CANDIDATES", "100")
+    )
+    celery_broker_url: str = os.getenv("RAG_CELERY_BROKER_URL", "redis://localhost:6379/0")
+    celery_result_backend: str = os.getenv(
+        "RAG_CELERY_RESULT_BACKEND", "redis://localhost:6379/1"
+    )
     max_upload_size_mb: int = int(os.getenv("RAG_MAX_UPLOAD_SIZE_MB", "25"))
     allowed_upload_extensions: tuple[str, ...] = tuple(
         ext.strip().lower()
