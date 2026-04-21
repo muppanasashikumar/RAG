@@ -17,6 +17,13 @@ function abortInFlightStream() {
   streamAbortController?.abort();
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const BACKEND_API_URL =
+  process.env.NEXT_PUBLIC_BACKEND_API_URL?.trim() || "http://localhost:8000";
+
 type ChatState = {
   uploadedFile: File | null;
   uploadedFileName: string;
@@ -82,9 +89,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     setStreamController(controller);
 
     const userContent = prompt.trim();
+    if (!uploadedFile) {
+      set((s) => ({
+        messages: [
+          ...s.messages,
+          { id: uuidv4(), role: "assistant", content: "Upload a PDF file before asking a question." },
+        ],
+      }));
+      return;
+    }
+
     const userId = uuidv4();
     const assistantId = uuidv4();
-    const citation = uploadedFile?.name || uploadedFileName || "No document selected";
+    const fallbackCitation = uploadedFile.name || uploadedFileName || "No document selected";
 
     set({ prompt: "" });
     set((s) => ({
@@ -96,45 +113,77 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     try {
-      const response = await fetch("/api/chat", {
+      const formData = new FormData();
+      formData.append("question", userContent);
+      formData.append("file", uploadedFile, uploadedFile.name);
+
+      const response = await fetch(`${BACKEND_API_URL}/api/v1/rag/query`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: userContent,
-          uploadedFileName: uploadedFile?.name || uploadedFileName || null,
-        }),
+        body: formData,
         signal: controller.signal,
       });
 
-      if (!response.ok || !response.body) {
+      if (!response.ok) {
         const detail = await response.text().catch(() => "");
         throw new Error(detail || `Request failed (${response.status})`);
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
+      const payload = (await response.json()) as {
+        answer?: unknown;
+        reasoning?: unknown;
+        citations?:
+          | Array<{ citation_id?: unknown; page_number?: unknown; score?: unknown }>
+          | unknown;
+      };
+
+      const answer = typeof payload.answer === "string" ? payload.answer : "";
+      const reasoning = typeof payload.reasoning === "string" ? payload.reasoning : "";
+      const citations = Array.isArray(payload.citations)
+        ? payload.citations.map((citation) => {
+            if (!citation || typeof citation !== "object") {
+              return fallbackCitation;
+            }
+            const citationId =
+              "citation_id" in citation && typeof citation.citation_id === "number"
+                ? citation.citation_id
+                : null;
+            const pageNumber =
+              "page_number" in citation && typeof citation.page_number === "number"
+                ? citation.page_number
+                : null;
+            const score =
+              "score" in citation && typeof citation.score === "number"
+                ? citation.score
+                : null;
+
+            const idPart = citationId ? `[${citationId}]` : "[?]";
+            const pagePart = pageNumber ? `p.${pageNumber}` : "p.?";
+            const scorePart = score !== null ? `${Math.round(score * 100)}%` : "n/a";
+            return `${idPart} ${pagePart} (${scorePart})`;
+          })
+        : [fallbackCitation];
+
+      const fullReply = reasoning ? `${answer}\n\nReasoning:\n${reasoning}` : answer;
+      const tokens = fullReply.match(/\S+\s*/g) ?? [fullReply];
       let accumulated = "";
 
-      while (true) {
-        const { value, done } = await reader.read();
-        if (value) {
-          accumulated += decoder.decode(value, { stream: true });
-          set((s) => ({
-            messages: s.messages.map((m) =>
-              m.id === assistantId ? { ...m, content: accumulated } : m,
-            ),
-          }));
+      for (const token of tokens) {
+        if (controller.signal.aborted) {
+          throw new DOMException("Aborted", "AbortError");
         }
-        if (done) {
-          accumulated += decoder.decode();
-          break;
-        }
+        accumulated += token;
+        set((s) => ({
+          messages: s.messages.map((m) =>
+            m.id === assistantId ? { ...m, content: accumulated } : m,
+          ),
+        }));
+        await sleep(token.trim() ? 28 : 0);
       }
 
       set((s) => ({
         messages: s.messages.map((m) =>
           m.id === assistantId
-            ? { ...m, content: accumulated, isStreaming: false, citations: [citation] }
+            ? { ...m, content: accumulated, isStreaming: false, citations }
             : m,
         ),
       }));

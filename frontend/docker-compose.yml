@@ -1,0 +1,22 @@
+services:
+  rag-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rag-app:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://backend:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    image: rag-backend:latest
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

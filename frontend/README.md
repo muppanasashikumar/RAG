@@ -2,9 +2,12 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
+The Next.js frontend now lives in `frontend/`.
+
 First, run the development server:
 
 ```bash
+cd frontend
 npm run dev
 # or
 yarn dev
@@ -16,7 +19,7 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+You can start editing the page by modifying `frontend/src/app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
@@ -25,7 +28,7 @@ This project uses [`next/font`](https://nextjs.org/docs/app/building-your-applic
 Build and run the production image:
 
 ```bash
-docker build -t rag-app .
+docker build -t rag-app ./frontend
 docker run --rm -p 3000:3000 --env-file .env.local rag-app
 ```
 
@@ -36,6 +39,33 @@ docker compose up --build
 ```
 
 Then open [http://localhost:3000](http://localhost:3000).
+
+This now starts:
+- Next.js frontend at [http://localhost:3000](http://localhost:3000)
+- FastAPI backend at [http://localhost:8000](http://localhost:8000)
+- FastAPI docs at [http://localhost:8000/docs](http://localhost:8000/docs)
+
+## Backend (FastAPI)
+
+Python backend lives in `backend/`.
+
+Quick start:
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+uvicorn app.main:app --reload
+```
+
+Lint and format:
+
+```bash
+cd backend
+ruff check .
+ruff format .
+```
 
 ## Learn More
 
