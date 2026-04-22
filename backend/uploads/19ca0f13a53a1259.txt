@@ -1,1 +1,0 @@
-John builds AI-powered scalable web apps with React, Next.js, TypeScript, Tailwind, and RAG systems. He implements streaming UIs, secure auth with Azure AD and RBAC, REST APIs, and unit tests.

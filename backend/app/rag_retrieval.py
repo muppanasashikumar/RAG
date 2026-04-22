@@ -47,13 +47,14 @@ class RAGRetrievalEngine:
             content = row["content"]
             page = int(row["page_number"])
             pdf_url = row["pdf_url"]
+            pdf_link_with_page = self._build_pdf_link_with_page(pdf_url=pdf_url, page=page)
             citations.append(
                 {
                     "citation_id": idx,
                     "document_id": row["doc_id"],
                     "source_filename": row["source_filename"],
                     "page_number": page,
-                    "pdf_link_with_page": f"{pdf_url}#page={page}",
+                    "pdf_link_with_page": pdf_link_with_page,
                     "content": content,
                     "score": row["hybrid_score"],
                 }
@@ -195,3 +196,11 @@ class RAGRetrievalEngine:
 
     def _tokenize(self, value: str) -> set[str]:
         return {token for token in re.findall(r"[a-zA-Z0-9]+", value.lower()) if len(token) > 2}
+
+    def _build_pdf_link_with_page(self, *, pdf_url: str, page: int) -> str:
+        normalized_url = pdf_url.strip()
+        # Legacy local file links are not valid once filesystem storage is removed.
+        if not normalized_url or normalized_url.startswith("/files/"):
+            return ""
+        separator = "&" if "#" in normalized_url else "#"
+        return f"{normalized_url}{separator}page={page}"

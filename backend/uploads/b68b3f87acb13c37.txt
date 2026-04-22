@@ -1,1 +1,0 @@
-RAG smoke test content for unstructured ingestion.
