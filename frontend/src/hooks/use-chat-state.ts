@@ -12,6 +12,7 @@ export function useChatState() {
       setPrompt: s.setPrompt,
       uploadedFiles: s.uploadedFiles,
       uploadedFileNames: s.uploadedFileNames,
+      uploadStatuses: s.uploadStatuses,
       isBatchUploading: s.isBatchUploading,
       uploadBatchFiles: s.uploadBatchFiles,
       clearUploadedFiles: s.clearUploadedFiles,

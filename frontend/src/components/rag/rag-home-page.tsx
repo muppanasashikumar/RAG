@@ -47,6 +47,7 @@ export function RagHomePage({ routeChatId }: RagHomePageProps) {
     setPrompt,
     uploadedFiles,
     uploadedFileNames,
+    uploadStatuses,
     isBatchUploading,
     uploadBatchFiles,
     clearUploadedFiles,
@@ -108,6 +109,7 @@ export function RagHomePage({ routeChatId }: RagHomePageProps) {
         messages={messages}
         prompt={prompt}
         isReplyStreaming={isReplyStreaming}
+        isIndexingDocuments={isBatchUploading}
         onPromptChange={setPrompt}
         onSubmit={handleSubmit}
         onStopStreaming={handleStopStreaming}
@@ -115,6 +117,7 @@ export function RagHomePage({ routeChatId }: RagHomePageProps) {
       <RightPanel
         uploadedFiles={uploadedFiles}
         uploadedFileNames={uploadedFileNames}
+        uploadStatuses={uploadStatuses}
         isBatchUploading={isBatchUploading}
         onUploadedFilesChange={uploadBatchFiles}
         onClearUploadedFiles={clearUploadedFiles}

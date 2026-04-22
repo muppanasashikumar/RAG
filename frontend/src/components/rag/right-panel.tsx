@@ -45,6 +45,7 @@ function validateSelectedFiles(files: File[]): string | null {
 export function RightPanel({
   uploadedFiles,
   uploadedFileNames,
+  uploadStatuses,
   isBatchUploading,
   onUploadedFilesChange,
   onClearUploadedFiles,
@@ -69,14 +70,28 @@ export function RightPanel({
         return;
       }
       setUploadError(null);
-      await onUploadedFilesChange(files);
+      try {
+        await onUploadedFilesChange(files);
+      } catch (error) {
+        const fallback =
+          error instanceof Error
+            ? error.message
+            : "Upload failed. Ensure backend ingestion service is reachable.";
+        setUploadError(fallback);
+      }
     },
     [onUploadedFilesChange],
   );
 
   const handleDropAccepted = useCallback(
-    async (acceptedFiles: File[]) => {
-      await applyFiles(acceptedFiles);
+    (acceptedFiles: File[]) => {
+      void applyFiles(acceptedFiles).catch((error) => {
+        const fallback =
+          error instanceof Error
+            ? error.message
+            : "Upload failed. Ensure backend ingestion service is reachable.";
+        setUploadError(fallback);
+      });
     },
     [applyFiles],
   );
@@ -190,6 +205,43 @@ export function RightPanel({
             ) : null}
           </div>
         </div>
+
+        {uploadStatuses.length > 0 ? (
+          <div className="mt-3 rounded-lg border bg-card p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Ingestion progress
+            </p>
+            <div className="mt-2 space-y-2">
+              {uploadStatuses.map((entry) => {
+                const statusLabel =
+                  entry.status === "queued"
+                    ? "Queued"
+                    : entry.status === "ingesting"
+                      ? "Ingesting"
+                      : entry.status === "indexed"
+                        ? "Indexed"
+                        : "Failed";
+                const statusClass =
+                  entry.status === "indexed"
+                    ? "text-emerald-600"
+                    : entry.status === "failed"
+                      ? "text-destructive"
+                      : "text-muted-foreground";
+                return (
+                  <div key={`${entry.fileName}-${entry.status}`} className="rounded-md border bg-background p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-xs font-medium">{entry.fileName}</p>
+                      <span className={`text-xs font-medium ${statusClass}`}>{statusLabel}</span>
+                    </div>
+                    {entry.error ? (
+                      <p className="mt-1 text-xs text-destructive">{entry.error}</p>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
       </div>
 
     </aside>

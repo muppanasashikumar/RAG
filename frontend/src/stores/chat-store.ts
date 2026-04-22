@@ -2,7 +2,12 @@ import type { FormEvent } from "react";
 import { create } from "zustand";
 import { v4 as uuidv4 } from "uuid";
 
-import type { Citation, Message, ReasoningStep } from "@/components/rag/chat/types";
+import type {
+  Citation,
+  Message,
+  ReasoningStep,
+  UploadStatusItem,
+} from "@/components/rag/chat/types";
 
 import { useSidebarStore } from "@/stores/sidebar-store";
 
@@ -73,9 +78,14 @@ function resolveDisplayFilename(rawSource: string, documentId: string, fallback:
   return normalized;
 }
 
+function buildBackendUrl(path: string): string {
+  return `${BACKEND_API_URL.replace(/\/$/, "")}${path}`;
+}
+
 type ChatState = {
   uploadedFiles: File[];
   uploadedFileNames: string[];
+  uploadStatuses: UploadStatusItem[];
   isBatchUploading: boolean;
   prompt: string;
   messages: Message[];
@@ -92,41 +102,85 @@ type ChatState = {
 export const useChatStore = create<ChatState>((set, get) => ({
   uploadedFiles: [],
   uploadedFileNames: [],
+  uploadStatuses: [],
   isBatchUploading: false,
   prompt: "",
   messages: [],
 
   uploadBatchFiles: async (files) => {
     if (files.length === 0) {
-      set({ uploadedFiles: [], uploadedFileNames: [] });
+      set({ uploadedFiles: [], uploadedFileNames: [], uploadStatuses: [] });
       return;
     }
 
-    set({ isBatchUploading: true });
+    const initialStatuses: UploadStatusItem[] = files.map((file) => ({
+      fileName: file.name,
+      status: "queued",
+    }));
+    set({ isBatchUploading: true, uploadStatuses: initialStatuses });
     try {
-      const formData = new FormData();
-      formData.append("parallelism", "4");
+      const successfulFiles: File[] = [];
+      const successfulFileNames: string[] = [];
       for (const file of files) {
-        formData.append("files", file, file.name);
-      }
-      const response = await fetch(`${BACKEND_API_URL}/api/v1/rag/upload-batch`, {
-        method: "POST",
-        body: formData,
-      });
-      if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        throw new Error(detail || `Batch upload failed (${response.status})`);
-      }
+        set((state) => ({
+          uploadStatuses: state.uploadStatuses.map((entry) =>
+            entry.fileName === file.name ? { ...entry, status: "ingesting", error: undefined } : entry,
+          ),
+        }));
+        const formData = new FormData();
+        formData.append("file", file, file.name);
+        const response = await fetch(buildBackendUrl("/ingest"), {
+          method: "POST",
+          body: formData,
+        });
+        if (!response.ok) {
+          const detail = await response.text().catch(() => "");
+          const errorMessage = detail || `Failed to ingest ${file.name} (${response.status})`;
+          set((state) => ({
+            uploadStatuses: state.uploadStatuses.map((entry) =>
+              entry.fileName === file.name
+                ? { ...entry, status: "failed", error: errorMessage }
+                : entry,
+            ),
+          }));
+          throw new Error(errorMessage);
+        }
 
-      set({
-        uploadedFiles: files,
-        uploadedFileNames: files.map((file) => file.name),
-      });
+        const payload = (await response.json().catch(() => null)) as
+          | { chunks_ingested?: unknown; message?: unknown }
+          | null;
+        const chunksIngested =
+          payload && typeof payload.chunks_ingested === "number" ? payload.chunks_ingested : null;
+        if (chunksIngested !== null && chunksIngested <= 0) {
+          const errorMessage =
+            payload && typeof payload.message === "string" && payload.message.trim()
+              ? payload.message
+              : `No searchable text was extracted from ${file.name}.`;
+          set((state) => ({
+            uploadStatuses: state.uploadStatuses.map((entry) =>
+              entry.fileName === file.name
+                ? { ...entry, status: "failed", error: errorMessage }
+                : entry,
+            ),
+          }));
+          throw new Error(errorMessage);
+        }
+
+        successfulFiles.push(file);
+        successfulFileNames.push(file.name);
+        set((state) => ({
+          uploadedFiles: successfulFiles,
+          uploadedFileNames: successfulFileNames,
+          uploadStatuses: state.uploadStatuses.map((entry) =>
+            entry.fileName === file.name ? { ...entry, status: "indexed", error: undefined } : entry,
+          ),
+        }));
+      }
     } finally {
       set({ isBatchUploading: false });
     }
   },
-  clearUploadedFiles: () => set({ uploadedFiles: [], uploadedFileNames: [] }),
+  clearUploadedFiles: () => set({ uploadedFiles: [], uploadedFileNames: [], uploadStatuses: [] }),
   setPrompt: (prompt) => set({ prompt }),
 
   stopStreaming: () => {
@@ -266,7 +320,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   submitPrompt: async (event) => {
     event.preventDefault();
 
-    const { prompt, messages, uploadedFileNames } = get();
+    const { prompt, messages, uploadedFileNames, uploadedFiles } = get();
     const isReplyStreaming = messages.some((m) => m.role === "assistant" && m.isStreaming);
 
     if (!prompt.trim() || isReplyStreaming) {
@@ -336,11 +390,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }, 900);
 
     try {
+      const selectedFileName = uploadedFileNames[0];
+      const selectedFile = uploadedFiles[0];
       const formData = new FormData();
-      formData.append("question", userContent);
-      formData.append("chat_id", resolvedChatId);
-
-      const response = await fetch(`${BACKEND_API_URL}/api/v1/rag/query`, {
+      formData.append("query", userContent);
+      if (selectedFile) {
+        formData.append("file", selectedFile, selectedFile.name);
+      }
+      const response = await fetch(buildBackendUrl("/chat/stream"), {
         method: "POST",
         body: formData,
         signal: controller.signal,
@@ -351,76 +408,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
         throw new Error(detail || `Request failed (${response.status})`);
       }
 
-      const payload = (await response.json()) as {
-        answer?: unknown;
-        reasoning?: unknown;
-        citations?: Array<{
-          citation_id?: unknown;
-          document_id?: unknown;
-          source_filename?: unknown;
-          page_number?: unknown;
-          pdf_link_with_page?: unknown;
-          content?: unknown;
-          score?: unknown;
-        }> | unknown;
-        reasoning_steps?: Array<{ step?: unknown; title?: unknown; detail?: unknown }> | unknown;
-      };
+      if (!response.body) {
+        throw new Error("No response stream from backend.");
+      }
 
-      const answer = typeof payload.answer === "string" ? payload.answer : "";
-      const reasoning = typeof payload.reasoning === "string" ? payload.reasoning : "";
-      const citations: Citation[] = Array.isArray(payload.citations)
-        ? payload.citations.map((citation) => {
-            if (!citation || typeof citation !== "object") {
-              return {
-                citationId: null,
-                documentId: fallbackCitation,
-                sourceFilename: fallbackCitation,
-                pageNumber: null,
-                pdfLinkWithPage: "",
-                content: fallbackCitation,
-                score: null,
-              };
-            }
-            const citationId: number | null =
-              "citation_id" in citation && typeof citation.citation_id === "number"
-                ? citation.citation_id
-                : null;
-            const pageNumber: number | null =
-              "page_number" in citation && typeof citation.page_number === "number"
-                ? citation.page_number
-                : null;
-            const score: number | null =
-              "score" in citation && typeof citation.score === "number"
-                ? citation.score
-                : null;
-            const documentId =
-              "document_id" in citation && typeof citation.document_id === "string"
-                ? citation.document_id
-                : fallbackCitation;
-            const sourceFilename =
-              "source_filename" in citation && typeof citation.source_filename === "string"
-                ? citation.source_filename
-                : fallbackCitation;
-            const pdfLinkWithPage =
-              "pdf_link_with_page" in citation && typeof citation.pdf_link_with_page === "string"
-                ? toAbsoluteDocumentUrl(citation.pdf_link_with_page)
-                : "";
-            const content =
-              "content" in citation && typeof citation.content === "string"
-                ? citation.content
-                : fallbackCitation;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let streamBuffer = "";
+      let accumulated = "";
+      let streamedCitations: Citation[] = [];
+      let streamedRetrievalMode: Message["retrievalMode"] | undefined;
+
+      const toCitations = (rawCitations: unknown): Citation[] => {
+        if (!Array.isArray(rawCitations)) {
+          return [];
+        }
+        return rawCitations.map((citation) => {
+          if (!citation || typeof citation !== "object") {
             return {
-              citationId,
-              documentId,
-              sourceFilename: resolveDisplayFilename(sourceFilename, documentId, fallbackCitation),
-              pageNumber,
-              pdfLinkWithPage,
-              content,
-              score,
-            };
-          })
-        : [
-            {
               citationId: null,
               documentId: fallbackCitation,
               sourceFilename: fallbackCitation,
@@ -428,46 +433,107 @@ export const useChatStore = create<ChatState>((set, get) => ({
               pdfLinkWithPage: "",
               content: fallbackCitation,
               score: null,
-            },
-          ];
-      const dedupedCitations = citations.filter((citation, index, arr) => {
-        const key = `${citation.sourceFilename.toLowerCase()}::${citation.pageNumber ?? "na"}`;
-        return index === arr.findIndex((item) => `${item.sourceFilename.toLowerCase()}::${item.pageNumber ?? "na"}` === key);
-      });
+            };
+          }
+          const citationId: number | null =
+            "citation_id" in citation && typeof citation.citation_id === "number"
+              ? citation.citation_id
+              : null;
+          const pageNumber: number | null =
+            "page_number" in citation && typeof citation.page_number === "number"
+              ? citation.page_number
+              : null;
+          const score: number | null =
+            "score" in citation && typeof citation.score === "number"
+              ? citation.score
+              : null;
+          const documentId =
+            "document_id" in citation && typeof citation.document_id === "string"
+              ? citation.document_id
+              : fallbackCitation;
+          const sourceFilename =
+            "source_filename" in citation && typeof citation.source_filename === "string"
+              ? citation.source_filename
+              : fallbackCitation;
+          const pdfLinkWithPage =
+            "pdf_link_with_page" in citation && typeof citation.pdf_link_with_page === "string"
+              ? toAbsoluteDocumentUrl(citation.pdf_link_with_page)
+              : "";
+          const content =
+            "content" in citation && typeof citation.content === "string"
+              ? citation.content
+              : fallbackCitation;
+          return {
+            citationId,
+            documentId,
+            sourceFilename: resolveDisplayFilename(sourceFilename, documentId, fallbackCitation),
+            pageNumber,
+            pdfLinkWithPage,
+            content,
+            score,
+          };
+        });
+      };
 
-      const reasoningSteps: ReasoningStep[] = Array.isArray(payload.reasoning_steps)
-        ? payload.reasoning_steps
-            .map((entry, index) => {
-              if (!entry || typeof entry !== "object") {
-                return null;
-              }
-              const step = typeof entry.step === "number" ? entry.step : index + 1;
-              const title = typeof entry.title === "string" ? entry.title.trim() : "";
-              const detail = typeof entry.detail === "string" ? entry.detail.trim() : "";
-              if (!title || !detail) {
-                return null;
-              }
-              return { step, title, detail };
-            })
-            .filter((entry): entry is ReasoningStep => Boolean(entry))
-        : [];
-
-      const fullReply = answer;
-      const tokens = fullReply.match(/\S+\s*/g) ?? [fullReply];
-      let accumulated = "";
-
-      for (const token of tokens) {
-        if (controller.signal.aborted) {
-          throw new DOMException("Aborted", "AbortError");
+      let done = false;
+      while (!done) {
+        const { value, done: streamDone } = await reader.read();
+        if (streamDone) {
+          break;
         }
-        accumulated += token;
-        set((s) => ({
-          messages: s.messages.map((m) =>
-            m.id === assistantId ? { ...m, content: accumulated } : m,
-          ),
-        }));
-        await sleep(token.trim() ? 28 : 0);
+        streamBuffer += decoder.decode(value, { stream: true });
+        const events = streamBuffer.split("\n\n");
+        streamBuffer = events.pop() ?? "";
+
+        for (const event of events) {
+          const dataLines = event
+            .split("\n")
+            .filter((line) => line.startsWith("data: "))
+            .map((line) => line.slice(6));
+          if (dataLines.length === 0) {
+            continue;
+          }
+          const eventData = dataLines.join("\n").trim();
+          if (eventData === "[DONE]") {
+            done = true;
+            break;
+          }
+          let parsed:
+            | { type?: unknown; content?: unknown; citations?: unknown; retrieval_mode?: unknown }
+            | null = null;
+          try {
+            parsed = JSON.parse(eventData) as { type?: unknown; content?: unknown; citations?: unknown };
+          } catch {
+            continue;
+          }
+          if (parsed?.type === "token" && typeof parsed.content === "string") {
+            accumulated += parsed.content;
+            set((s) => ({
+              messages: s.messages.map((m) =>
+                m.id === assistantId ? { ...m, content: accumulated } : m,
+              ),
+            }));
+          }
+          if (parsed?.type === "citations") {
+            streamedCitations = toCitations(parsed.citations);
+            if (
+              parsed.retrieval_mode === "vector" ||
+              parsed.retrieval_mode === "fallback" ||
+              parsed.retrieval_mode === "none"
+            ) {
+              streamedRetrievalMode = parsed.retrieval_mode;
+            }
+          }
+        }
       }
+
+      const dedupedCitations = streamedCitations.filter((citation, index, arr) => {
+        const key = `${citation.sourceFilename.toLowerCase()}::${citation.pageNumber ?? "na"}`;
+        return (
+          index ===
+          arr.findIndex((item) => `${item.sourceFilename.toLowerCase()}::${item.pageNumber ?? "na"}` === key)
+        );
+      });
 
       set((s) => ({
         messages: s.messages.map((m) =>
@@ -477,19 +543,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 content: accumulated,
                 isStreaming: false,
                 citations: dedupedCitations,
-                reasoningSteps:
-                  reasoningSteps.length > 0 && reasoning
-                    ? [
-                        ...reasoningSteps.slice(0, -1),
-                        {
-                          ...reasoningSteps[reasoningSteps.length - 1],
-                          detail: reasoning,
-                          status: "completed",
-                        },
-                      ].map((entry) => ({ ...entry, status: "completed" }))
-                    : (reasoningSteps.length > 0
-                        ? reasoningSteps.map((entry) => ({ ...entry, status: "completed" }))
-                        : DEFAULT_PROCESSING_STEPS.map((entry) => ({ ...entry, status: "completed" }))),
+                retrievalMode: streamedRetrievalMode,
+                reasoningSteps: DEFAULT_PROCESSING_STEPS.map((entry) => ({ ...entry, status: "completed" })),
               }
             : m,
         ),

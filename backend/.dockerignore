@@ -1,6 +1,8 @@
-__pycache__/
+.git
+.gitignore
+.venv
+__pycache__
 *.pyc
-*.pyo
-*.pyd
-.venv/
-.ruff_cache/
+.pytest_cache
+.mypy_cache
+.DS_Store

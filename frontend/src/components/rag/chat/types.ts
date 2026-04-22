@@ -14,6 +14,7 @@ export type Message = {
   role: "assistant" | "user";
   content: string;
   citations?: Citation[];
+  retrievalMode?: "vector" | "fallback" | "none";
   reasoningSteps?: ReasoningStep[];
   /** Assistant message is still receiving streamed tokens */
   isStreaming?: boolean;
@@ -40,6 +41,7 @@ export type ChatPanelProps = {
   messages: Message[];
   prompt: string;
   isReplyStreaming: boolean;
+  isIndexingDocuments: boolean;
   onPromptChange: (value: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onStopStreaming: () => void;
@@ -84,9 +86,16 @@ export type ChatSidebarProps = {
 export type RightPanelProps = {
   uploadedFiles: File[];
   uploadedFileNames: string[];
+  uploadStatuses: UploadStatusItem[];
   isBatchUploading: boolean;
   onUploadedFilesChange: (files: File[]) => Promise<void>;
   onClearUploadedFiles: () => void;
+};
+
+export type UploadStatusItem = {
+  fileName: string;
+  status: "queued" | "ingesting" | "indexed" | "failed";
+  error?: string;
 };
 
 export type WorkspaceHeaderProps = {

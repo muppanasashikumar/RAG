@@ -26,7 +26,7 @@ function getCitationFilename(pdfLinkWithPage: string, fallback: string): string 
 
 function AssistantMarkdown({ content }: { content: string }) {
   return (
-    <div className="text-sm leading-6 whitespace-pre-wrap [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-6 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5">
+    <div className="text-sm leading-6 whitespace-pre-wrap [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-6 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_table]:overflow-hidden [&_table]:rounded-md [&_table]:border [&_th]:border [&_th]:bg-muted/60 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_td]:border [&_td]:px-3 [&_td]:py-2 [&_thead_tr]:border-b [&_tbody_tr:nth-child(even)]:bg-muted/30">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -45,6 +45,7 @@ export function ChatPanel({
   messages,
   prompt,
   isReplyStreaming,
+  isIndexingDocuments,
   onPromptChange,
   onSubmit,
   onStopStreaming,
@@ -135,6 +136,14 @@ export function ChatPanel({
               />
               Streaming
             </>
+          ) : isIndexingDocuments ? (
+            <>
+              <span
+                className="size-4 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin"
+                aria-hidden="true"
+              />
+              Indexing docs
+            </>
           ) : (
             <>
               <CheckCircle2 className="size-4 text-emerald-600" aria-hidden="true" />
@@ -183,32 +192,6 @@ export function ChatPanel({
                 ) : (
                   <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
                 )}
-                {message.reasoningSteps && message.reasoningSteps.length > 0 ? (
-                  <div className="mt-3 space-y-2 rounded-md border bg-muted/40 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      Reasoning trace
-                    </p>
-                    {message.reasoningSteps.map((step) => (
-                      <div key={`${message.id}-step-${step.step}`} className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
-                        <span
-                          className={`mt-1 inline-block size-2 rounded-full ${
-                            step.status === "completed"
-                              ? "bg-emerald-500"
-                              : step.status === "in_progress"
-                                ? "animate-pulse bg-blue-500"
-                                : "bg-muted-foreground/40"
-                          }`}
-                          aria-hidden="true"
-                        />
-                        <span className="font-medium text-foreground">
-                          Step {step.step}: {step.title}
-                        </span>
-                        {" - "}
-                        {step.detail}
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
                 {message.citations ? (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {message.citations.map((citation) => {
@@ -240,6 +223,11 @@ export function ChatPanel({
                     })}
                   </div>
                 ) : null}
+                {message.role === "assistant" && message.retrievalMode ? (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Retrieval mode: <span className="font-medium">{message.retrievalMode}</span>
+                  </p>
+                ) : null}
               </div>
 
               {message.role === "user" ? (
@@ -269,6 +257,11 @@ export function ChatPanel({
 
       <div className="shrink-0 border-t p-4">
         <form onSubmit={onSubmit} className="flex flex-col gap-2">
+          {isIndexingDocuments ? (
+            <p className="text-xs text-muted-foreground">
+              Documents are still indexing. You can ask now, but responses may not include the newly uploaded files yet.
+            </p>
+          ) : null}
           <ChatVoiceDictation
             prompt={prompt}
             onPromptChange={onPromptChange}
