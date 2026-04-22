@@ -7,15 +7,11 @@ from typing import Any
 from fastapi import UploadFile
 
 from app.celery_app import celery_app
-from app.chat_history import ChatHistoryStore
+from app.database.connection import database_manager
 from app.rag import RAGService, RAGSettings
 
 settings = RAGSettings()
 rag_service = RAGService(settings=settings)
-chat_store = ChatHistoryStore(
-    mongodb_uri=settings.mongodb_uri,
-    mongodb_database=settings.mongodb_database,
-)
 _initialized = False
 
 
@@ -23,7 +19,7 @@ async def _initialize_once() -> None:
     global _initialized
     if _initialized:
         return
-    await chat_store.initialize()
+    await database_manager.initialize()
     _initialized = True
 
 

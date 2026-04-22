@@ -5,13 +5,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes.routes import chat_store
-from app.routes.routes import router as api_router
+from app.api.api_router import api_router
+from app.database.connection import database_manager
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    await chat_store.initialize()
+    await database_manager.initialize()
     yield
 
 app = FastAPI(

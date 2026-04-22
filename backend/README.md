@@ -14,6 +14,21 @@ uvicorn app.main:app --reload
 Backend is available at [http://localhost:8000](http://localhost:8000) and docs at
 [http://localhost:8000/docs](http://localhost:8000/docs).
 
+## Architecture
+
+The backend follows layered separation of concerns:
+
+- `app/api/routes`: endpoint modules (`rag_routes.py`, `chat_routes.py`, `auth_routes.py`)
+- `app/api/api_router.py`: central API router composition
+- `app/services`: business workflows and orchestration
+- `app/repositories`: Beanie ODM data-access operations
+- `app/models`: Beanie document models
+- `app/schemas`: request/response schemas
+
+Request flow:
+
+`api route -> service -> repository -> MongoDB (Beanie ODM models)`
+
 ## RAG endpoint
 
 `POST /api/v1/rag/query` accepts a multipart form with:
@@ -105,7 +120,7 @@ Response now includes:
 ## Recent chats endpoint
 
 `GET /api/v1/rag/chats?limit=20&offset=0` returns paginated recent conversations from
-MongoDB (using Beanie ORM models) for infinite-scroll UIs.
+MongoDB (using Beanie ODM models) for infinite-scroll UIs.
 
 Chat history and document chunks are both stored in MongoDB via Beanie models.
 

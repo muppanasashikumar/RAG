@@ -5,14 +5,16 @@ import io
 import mimetypes
 import re
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import UploadFile
 from sentence_transformers import SentenceTransformer
 from unstructured.partition.auto import partition
 
-from app.db_models import RAGChunkDocument
+from app.models.documents import RAGChunkDocument
 from app.rag_settings import RAGSettings
+from app.repositories.rag_chunk_repository import RAGChunkRepository
 
 
 class RAGIngestionEngine:
@@ -20,9 +22,11 @@ class RAGIngestionEngine:
         self,
         settings: RAGSettings,
         embedder: SentenceTransformer,
+        chunk_repository: RAGChunkRepository | None = None,
     ) -> None:
         self.settings = settings
         self.embedder = embedder
+        self.chunk_repository = chunk_repository or RAGChunkRepository()
 
     async def ingest_document(self, file: UploadFile) -> dict[str, Any]:
         payload = await file.read()
@@ -36,7 +40,7 @@ class RAGIngestionEngine:
         doc_id = file_hash[:16]
         stored_name = f"{doc_id}{suffix}"
 
-        existing = await RAGChunkDocument.find_one(RAGChunkDocument.doc_id == doc_id)
+        existing = await self.chunk_repository.find_one_by_doc_id(doc_id=doc_id)
         if existing is not None:
             return {
                 "document_id": doc_id,
@@ -70,7 +74,7 @@ class RAGIngestionEngine:
             )
             for item, embedding in zip(chunks, embeddings, strict=False)
         ]
-        await RAGChunkDocument.insert_many(documents)
+        await self.chunk_repository.insert_many(documents)
         return {
             "document_id": doc_id,
             "filename": file.filename or stored_name,

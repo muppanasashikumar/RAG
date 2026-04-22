@@ -6,14 +6,21 @@ from typing import Any
 from pymongo.errors import OperationFailure
 from sentence_transformers import SentenceTransformer
 
-from app.db_models import RAGChunkDocument
+from app.models.documents import RAGChunkDocument
 from app.rag_settings import RAGSettings
+from app.repositories.rag_chunk_repository import RAGChunkRepository
 
 
 class RAGRetrievalEngine:
-    def __init__(self, settings: RAGSettings, embedder: SentenceTransformer) -> None:
+    def __init__(
+        self,
+        settings: RAGSettings,
+        embedder: SentenceTransformer,
+        chunk_repository: RAGChunkRepository | None = None,
+    ) -> None:
         self.settings = settings
         self.embedder = embedder
+        self.chunk_repository = chunk_repository or RAGChunkRepository()
 
     async def retrieve_context(
         self, question: str, document_id: str | None = None
@@ -59,11 +66,9 @@ class RAGRetrievalEngine:
         self, question: str, query_embedding: list[float], document_id: str | None
     ) -> list[dict[str, Any]]:
         if document_id:
-            chunk_docs = await RAGChunkDocument.find(
-                RAGChunkDocument.doc_id == document_id
-            ).to_list()
+            chunk_docs = await self.chunk_repository.list_by_doc_id(doc_id=document_id)
         else:
-            chunk_docs = await RAGChunkDocument.find_all().to_list()
+            chunk_docs = await self.chunk_repository.list_all()
         return self._score_chunks(
             question=question,
             query_embedding=query_embedding,
@@ -73,7 +78,7 @@ class RAGRetrievalEngine:
     async def _vector_search_rows(
         self, question: str, query_embedding: list[float], document_id: str | None
     ) -> list[dict[str, Any]]:
-        collection = RAGChunkDocument.get_pymongo_collection()
+        raw_collection = RAGChunkDocument.get_pymongo_collection()
         limit = self.settings.top_k * self.settings.hybrid_candidate_multiplier
         num_candidates = max(self.settings.mongodb_vector_num_candidates, limit)
         vector_stage: dict[str, Any] = {
@@ -99,7 +104,7 @@ class RAGRetrievalEngine:
             },
         ]
         try:
-            cursor = await collection.aggregate(pipeline)
+            cursor = await raw_collection.aggregate(pipeline)
             rows = await cursor.to_list(length=limit)
         except OperationFailure:
             return await self._python_scored_rows(
