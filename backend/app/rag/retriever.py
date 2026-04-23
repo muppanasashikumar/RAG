@@ -13,6 +13,10 @@ def _project_fields():
         "text": 1,
         "page_number": 1,
         "document_url": 1,
+        "documentUrl": 1,
+        "file_url": 1,
+        "fileUrl": 1,
+        "url": 1,
         "document_name": 1,
     }
 
@@ -74,7 +78,13 @@ def _resolve_document_metadata(file_name: str) -> dict:
         or document.get("title")
         or document.get("file")
     )
-    document_url = document.get("document_url")
+    document_url = (
+        document.get("document_url")
+        or document.get("documentUrl")
+        or document.get("file_url")
+        or document.get("fileUrl")
+        or document.get("url")
+    )
     return {
         "document_name": document_name,
         "document_url": document_url,
@@ -92,7 +102,16 @@ def _enrich_docs_with_document_metadata(docs):
             metadata_cache[file_name] = _resolve_document_metadata(file_name)
         metadata = metadata_cache[file_name]
 
-        if metadata.get("document_url"):
+        existing_url = (
+            doc.get("document_url")
+            or doc.get("documentUrl")
+            or doc.get("file_url")
+            or doc.get("fileUrl")
+            or doc.get("url")
+        )
+        if existing_url:
+            doc["document_url"] = existing_url
+        elif metadata.get("document_url"):
             doc["document_url"] = metadata["document_url"]
         if metadata.get("document_name"):
             doc["document_name"] = metadata["document_name"]
@@ -132,6 +151,10 @@ def retrieve(query_embedding, file=None, query_text=""):
                 "text": 1,
                 "page_number": 1,
                 "document_url": 1,
+                "documentUrl": 1,
+                "file_url": 1,
+                "fileUrl": 1,
+                "url": 1,
                 "score": {"$meta": "vectorSearchScore"},
             }
         },

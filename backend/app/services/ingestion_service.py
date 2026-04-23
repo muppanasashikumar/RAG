@@ -42,19 +42,37 @@ def ingest_file(file: UploadFile) -> dict:
             }
 
         vector_collection.delete_many({"file": filename})
-        existing_document = documents_collection.find_one({"file": filename}, {"_id": 0, "document_url": 1})
-        stored_document_url = (
-            existing_document.get("document_url") if existing_document and existing_document.get("document_url") else None
+        existing_document = documents_collection.find_one(
+            {"file": filename},
+            {
+                "_id": 0,
+                "document_url": 1,
+                "documentUrl": 1,
+                "file_url": 1,
+                "fileUrl": 1,
+                "url": 1,
+            },
         )
-        default_document_url = f"/documents/{quote(filename)}"
-        document_url = stored_document_url if stored_document_url and not stored_document_url.startswith("/documents/") else default_document_url
+        stored_document_url = None
+        if existing_document:
+            stored_document_url = (
+                existing_document.get("document_url")
+                or existing_document.get("documentUrl")
+                or existing_document.get("file_url")
+                or existing_document.get("fileUrl")
+                or existing_document.get("url")
+            )
+        if isinstance(stored_document_url, str) and stored_document_url.strip():
+            resolved_document_url = stored_document_url.strip()
+        else:
+            resolved_document_url = f"/documents/{quote(filename)}"
         documents_collection.update_one(
             {"file": filename},
             {
                 "$set": {
                     "file": filename,
                     "document_name": filename,
-                    "document_url": document_url,
+                    "document_url": resolved_document_url,
                     "updated_at": datetime.now(UTC),
                 },
                 "$setOnInsert": {"created_at": datetime.now(UTC)},
@@ -69,7 +87,7 @@ def ingest_file(file: UploadFile) -> dict:
                     "file": filename,
                     "text": chunk["text"],
                     "page_number": chunk.get("page_number"),
-                    "document_url": document_url,
+                    "document_url": resolved_document_url,
                     "embedding": embed_text(chunk["text"]),
                 }
             )
@@ -79,7 +97,7 @@ def ingest_file(file: UploadFile) -> dict:
         return {
             "file": filename,
             "chunks_ingested": len(payload),
-            "document_url": document_url,
+            "document_url": resolved_document_url,
             "message": "File ingested successfully.",
         }
     finally:

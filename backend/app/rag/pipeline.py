@@ -25,13 +25,21 @@ def rag_stream_pipeline(query, file=None):
     citations = []
     for index, doc in enumerate(docs, start=1):
         document_name = doc.get("document_name") or doc.get("file", "unknown")
+        document_url = (
+            doc.get("document_url")
+            or doc.get("documentUrl")
+            or doc.get("file_url")
+            or doc.get("fileUrl")
+            or doc.get("url")
+            or ""
+        )
         citations.append(
             {
                 "citation_id": index,
                 "document_id": doc.get("file", "unknown"),
                 "source_filename": document_name,
                 "page_number": doc.get("page_number"),
-                "pdf_link_with_page": doc.get("document_url", ""),
+                "pdf_link_with_page": document_url,
                 "content": doc.get("text", ""),
                 "score": doc.get("score"),
             }

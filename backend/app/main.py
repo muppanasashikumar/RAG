@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -24,14 +22,12 @@ app.add_middleware(
 
 app.include_router(rag_router)
 app.include_router(ingest_router)
-
-documents_dir: Path = get_documents_dir()
-documents_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/documents", StaticFiles(directory=str(documents_dir)), name="documents")
+app.mount("/documents", StaticFiles(directory=str(get_documents_dir())), name="documents")
 
 
 @app.on_event("startup")
 async def startup_event():
+    get_documents_dir().mkdir(parents=True, exist_ok=True)
     initialize_collections()
 
 
