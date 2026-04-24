@@ -1,36 +1,58 @@
+"""Application entry point.
+
+Responsibilities (only):
+  * build the FastAPI app via the application factory,
+  * register middleware, routers, exception handlers,
+  * manage startup/shutdown via `lifespan`.
+"""
+
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
-from app.core.config import get_documents_dir
-from app.db.mongodb import initialize_collections
-from app.routes.ingest_routes import router as ingest_router
-from app.routes.rag_routes import router as rag_router
+from app.api.v1 import router as v1_router
+from app.core.errors import register_exception_handlers
+from app.core.logging import configure_logging
+from app.infrastructure.mongo import initialize_collections
 
-app = FastAPI(title="RAG Backend")
+logger = logging.getLogger(__name__)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.include_router(rag_router)
-app.include_router(ingest_router)
-app.mount("/documents", StaticFiles(directory=str(get_documents_dir())), name="documents")
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 
 
-@app.on_event("startup")
-async def startup_event():
-    get_documents_dir().mkdir(parents=True, exist_ok=True)
-    initialize_collections()
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    configure_logging()
+    await initialize_collections()
+    logger.info("RAG Backend started")
+    yield
+    logger.info("RAG Backend shutting down")
 
 
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+def create_app() -> FastAPI:
+    app = FastAPI(title="RAG Backend", lifespan=lifespan)
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    register_exception_handlers(app)
+
+    # Serve only versioned API routes.
+    app.include_router(v1_router, prefix="/api/v1")
+
+    return app
+
+
+app = create_app()

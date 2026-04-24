@@ -12,11 +12,17 @@ class Settings(BaseSettings):
 
     VECTOR_COLLECTION: str = "vector_documents"
 
-    S3_BUCKET: str
+    SUPABASE_URL: str
+    SUPABASE_STORAGE_BUCKET: str
+    SUPABASE_SERVICE_ROLE_KEY: str
+    SUPABASE_OBJECT_PREFIX: str = "documents"
+    DOCUMENT_STORAGE_PROVIDER: str = "supabase"
 
     DOCUMENTS_DIR: str = "documents_storage"
 
-    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
+    RERANKER_ENABLED: bool = False
+    RERANKER_MODEL: str = "BAAI/bge-reranker-base"
     LLM_MODEL: str = "openai/gpt-oss-20b"
 
     class Config:

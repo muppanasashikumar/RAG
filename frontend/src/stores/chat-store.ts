@@ -79,7 +79,12 @@ function resolveDisplayFilename(rawSource: string, documentId: string, fallback:
 }
 
 function buildBackendUrl(path: string): string {
-  return `${BACKEND_API_URL.replace(/\/$/, "")}${path}`;
+  const normalizedBase = BACKEND_API_URL.replace(/\/$/, "");
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  if (normalizedPath.startsWith("/api/v1/") || normalizedPath === "/api/v1") {
+    return `${normalizedBase}${normalizedPath}`;
+  }
+  return `${normalizedBase}/api/v1${normalizedPath}`;
 }
 
 type ChatState = {
@@ -237,7 +242,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
       const history: Message[] = Array.isArray(payload.messages)
         ? payload.messages
-            .map((entry) => {
+            .map((entry): Message | null => {
               if (!entry || typeof entry !== "object") {
                 return null;
               }
@@ -299,7 +304,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
                       };
                     })
                   : undefined;
-              return { id: uuidv4(), role, content, citations } satisfies Message;
+              if (citations) {
+                return { id: uuidv4(), role, content, citations };
+              }
+              return { id: uuidv4(), role, content };
             })
             .filter((message): message is Message => message !== null)
         : [];
@@ -394,6 +402,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const selectedFile = uploadedFiles[0];
       const formData = new FormData();
       formData.append("query", userContent);
+      formData.append("chat_id", resolvedChatId);
       if (selectedFile) {
         formData.append("file", selectedFile, selectedFile.name);
       }
@@ -518,6 +527,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamedCitations = toCitations(parsed.citations);
             if (
               parsed.retrieval_mode === "vector" ||
+              parsed.retrieval_mode === "hybrid" ||
               parsed.retrieval_mode === "fallback" ||
               parsed.retrieval_mode === "none"
             ) {

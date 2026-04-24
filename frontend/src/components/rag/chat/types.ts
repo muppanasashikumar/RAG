@@ -14,7 +14,7 @@ export type Message = {
   role: "assistant" | "user";
   content: string;
   citations?: Citation[];
-  retrievalMode?: "vector" | "fallback" | "none";
+  retrievalMode?: "vector" | "hybrid" | "fallback" | "none";
   reasoningSteps?: ReasoningStep[];
   /** Assistant message is still receiving streamed tokens */
   isStreaming?: boolean;
