@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from typing import Any, Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from pydantic import BaseModel, Field
 
 from app.domain.models import RetrievalMode
@@ -46,6 +47,19 @@ Output requirements:
 - Mention uncertainty clearly when evidence is weak.
 - Do not mention internal implementation details.
 """.strip()
+_RAG_PROMPT_TEMPLATE = ChatPromptTemplate.from_messages(
+    [
+        ("system", _RAG_SYSTEM_PROMPT),
+        MessagesPlaceholder(variable_name="history"),
+        (
+            "human",
+            "Use the context blocks below to answer.\n\n"
+            "Context blocks:\n{context}\n\n"
+            "User question:\n{query}\n\n"
+            "Return a response that follows the structured schema.",
+        ),
+    ]
+)
 
 
 class RagStructuredAnswer(BaseModel):
@@ -202,14 +216,15 @@ class RagService:
             reranked.append(doc)
         return reranked
 
-    async def _stream_llm_tokens(self, messages: list[Any]) -> AsyncIterator[str]:
-        stream = self._llm.stream_messages(messages)
+    async def _stream_llm_tokens(self, messages: list[BaseMessage]) -> AsyncIterator[str]:
+        stream = self._llm.astream_messages(messages)
         while True:
-            token = await asyncio.wait_for(
-                asyncio.to_thread(next, stream, None),
-                timeout=_NEXT_TOKEN_TIMEOUT_SECONDS,
-            )
-            if token is None:
+            try:
+                token = await asyncio.wait_for(
+                    anext(stream),
+                    timeout=_NEXT_TOKEN_TIMEOUT_SECONDS,
+                )
+            except StopAsyncIteration:
                 break
             yield token
 
@@ -220,19 +235,12 @@ class RagService:
         context: str,
         chat_history: list[dict[str, Any]] | None,
     ) -> list[BaseMessage]:
-        messages: list[BaseMessage] = [SystemMessage(content=_RAG_SYSTEM_PROMPT)]
-        messages.extend(self._history_to_messages(chat_history))
-        messages.append(
-            HumanMessage(
-                content=(
-                    "Use the context blocks below to answer.\n\n"
-                    f"Context blocks:\n{context}\n\n"
-                    f"User question:\n{query}\n\n"
-                    "Return a response that follows the structured schema."
-                )
-            )
+        history_messages = self._history_to_messages(chat_history)
+        return _RAG_PROMPT_TEMPLATE.format_messages(
+            history=history_messages,
+            context=context,
+            query=query,
         )
-        return messages
 
     def _history_to_messages(
         self, chat_history: list[dict[str, Any]] | None

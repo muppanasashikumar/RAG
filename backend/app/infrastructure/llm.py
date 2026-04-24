@@ -5,7 +5,7 @@ Wraps a LangChain chat model used for streaming completions.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from typing import TypeVar
 
 from langchain_core.messages import BaseMessage, HumanMessage
@@ -31,19 +31,12 @@ class LLMClient:
 
     def stream_messages(self, messages: list[BaseMessage]) -> Iterator[str]:
         for chunk in self._client.stream(messages):
-            content = chunk.content
-            if isinstance(content, str):
-                if content:
-                    yield content
-                continue
+            yield from self._extract_text(chunk.content)
 
-            # Some providers emit structured content blocks; collect text entries.
-            if isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "text":
-                        text = item.get("text")
-                        if isinstance(text, str) and text:
-                            yield text
+    async def astream_messages(self, messages: list[BaseMessage]) -> AsyncIterator[str]:
+        async for chunk in self._client.astream(messages):
+            for text in self._extract_text(chunk.content):
+                yield text
 
     def invoke_structured(
         self,
@@ -53,6 +46,21 @@ class LLMClient:
     ) -> StructuredModelT:
         structured_llm = self._client.with_structured_output(schema)
         return structured_llm.invoke(messages)
+
+    @staticmethod
+    def _extract_text(content: object) -> Iterator[str]:
+        if isinstance(content, str):
+            if content:
+                yield content
+            return
+
+        # Some providers emit structured content blocks; collect text entries.
+        if isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text = item.get("text")
+                    if isinstance(text, str) and text:
+                        yield text
 
 
 _instance: LLMClient | None = None
