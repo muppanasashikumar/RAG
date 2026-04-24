@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
@@ -30,15 +30,41 @@ _NEXT_TOKEN_TIMEOUT_SECONDS = 30
 _RERANK_CANDIDATES = 12
 _FINAL_RETRIEVAL_LIMIT = 5
 _RRF_K = 60
-_RAG_SYSTEM_PROMPT = (
-    "Answer the user using only the provided context. "
-    "If the context is insufficient, say so clearly and avoid guessing."
-)
+_RAG_SYSTEM_PROMPT = """
+You are a production RAG assistant.
+
+Your primary requirement is strict grounding:
+1) Use ONLY facts present in the provided context blocks.
+2) Do NOT use outside knowledge, assumptions, or guesses.
+3) If context is missing or ambiguous, explicitly state what is missing.
+4) Be concise, accurate, and actionable.
+
+Output requirements:
+- You MUST return data matching the structured schema exactly.
+- The `answer` must be plain markdown text for end users.
+- Prefer short sections and bullet points when useful.
+- Mention uncertainty clearly when evidence is weak.
+- Do not mention internal implementation details.
+""".strip()
 
 
 class RagStructuredAnswer(BaseModel):
     answer: str = Field(
         description="Final response to the user grounded in provided context."
+    )
+    grounded_in_context: bool = Field(
+        description="True if all substantive claims are supported by the provided context."
+    )
+    confidence: Literal["high", "medium", "low"] = Field(
+        description="Confidence level based only on quality and completeness of context."
+    )
+    key_points: list[str] = Field(
+        default_factory=list,
+        description="Top factual takeaways strictly from context.",
+    )
+    missing_information: list[str] = Field(
+        default_factory=list,
+        description="What additional data is needed when context is insufficient.",
     )
 
 
@@ -111,10 +137,10 @@ class RagService:
                     messages,
                     schema=RagStructuredAnswer,
                 )
-                answer = structured.answer.strip()
-                if answer:
+                formatted = self._format_structured_answer(structured).strip()
+                if formatted:
                     emitted = True
-                    yield {"type": "token", "content": answer}
+                    yield {"type": "token", "content": formatted}
             except Exception:
                 logger.warning("Structured output failed; falling back to token stream", exc_info=True)
 
@@ -196,7 +222,16 @@ class RagService:
     ) -> list[BaseMessage]:
         messages: list[BaseMessage] = [SystemMessage(content=_RAG_SYSTEM_PROMPT)]
         messages.extend(self._history_to_messages(chat_history))
-        messages.append(HumanMessage(content=f"Context:\n{context}\n\nQuestion:\n{query}"))
+        messages.append(
+            HumanMessage(
+                content=(
+                    "Use the context blocks below to answer.\n\n"
+                    f"Context blocks:\n{context}\n\n"
+                    f"User question:\n{query}\n\n"
+                    "Return a response that follows the structured schema."
+                )
+            )
+        )
         return messages
 
     def _history_to_messages(
@@ -240,25 +275,46 @@ class RagService:
         seen: set[str] = set()
         current_size = 0
 
-        for doc in docs:
+        for index, doc in enumerate(docs, start=1):
             text = (doc.get("text") or "").strip()
             if not text or text in seen:
                 continue
 
-            candidate_size = current_size + len(text) + (1 if parts else 0)
+            source = doc.get("document_name") or doc.get("file") or "unknown"
+            page = doc.get("page_number")
+            page_label = f"page {page}" if page is not None else "page unknown"
+            block = f"[C{index}] Source: {source} ({page_label})\n{text}"
+
+            candidate_size = current_size + len(block) + (2 if parts else 0)
             if candidate_size > _MAX_CONTEXT_CHARS:
                 remaining = _MAX_CONTEXT_CHARS - current_size
                 if remaining <= 0:
                     break
-                text = text[:remaining]
-                parts.append(text)
+                block = block[:remaining]
+                parts.append(block)
                 break
 
             seen.add(text)
-            parts.append(text)
+            parts.append(block)
             current_size = candidate_size
 
-        return "\n".join(parts)
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _format_structured_answer(payload: RagStructuredAnswer) -> str:
+        lines: list[str] = [payload.answer.strip()]
+        lines.append(f"\nConfidence: {payload.confidence}")
+        lines.append(f"Grounded in provided context: {'yes' if payload.grounded_in_context else 'no'}")
+
+        if payload.key_points:
+            lines.append("\nKey points:")
+            lines.extend(f"- {point}" for point in payload.key_points if point.strip())
+
+        if payload.missing_information:
+            lines.append("\nMissing information:")
+            lines.extend(f"- {item}" for item in payload.missing_information if item.strip())
+
+        return "\n".join(lines).strip()
 
     @staticmethod
     def _doc_key(doc: dict[str, Any]) -> str:
