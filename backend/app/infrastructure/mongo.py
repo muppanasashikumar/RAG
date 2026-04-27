@@ -7,7 +7,7 @@ from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
 
 from app.core.config import settings
-from app.infrastructure.mongo_models import ChatHistory, StoredDocument, VectorChunk
+from app.infrastructure.mongo_models import ChatHistory, ChatMessage, StoredDocument, VectorChunk
 
 
 class MongoProvider:
@@ -34,7 +34,7 @@ class MongoProvider:
             return
         await init_beanie(
             database=self._db,
-            document_models=[StoredDocument, VectorChunk, ChatHistory],
+            document_models=[StoredDocument, VectorChunk, ChatHistory, ChatMessage],
         )
         self._initialized = True
 
@@ -55,6 +55,6 @@ async def initialize_collections() -> None:
     """Create required collections on startup so they appear in Atlas."""
     provider = await get_mongo_provider()
     existing = set(await provider.db.list_collection_names())
-    required = {settings.VECTOR_COLLECTION, "chat_history", "documents"}
+    required = {settings.VECTOR_COLLECTION, "chat_history", "chat_messages", "documents"}
     for name in required - existing:
         await provider.db.create_collection(name)

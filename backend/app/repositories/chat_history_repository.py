@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from app.infrastructure.mongo_models import ChatHistory, ChatMessageRecord
+from app.infrastructure.mongo_models import ChatHistory, ChatMessage
 
 
 class ChatHistoryRepository:
@@ -21,29 +21,40 @@ class ChatHistoryRepository:
         retrieval_mode: str | None,
     ) -> None:
         now = datetime.now(UTC)
-        existing = await ChatHistory.find_one({"chat_id": chat_id})
-        user_message = ChatMessageRecord(role="user", content=user_content)
-        assistant_message = ChatMessageRecord(
-            role="assistant",
-            content=assistant_content,
-            citations=citations,
-            retrieval_mode=retrieval_mode,
+        await ChatMessage.insert_many(
+            [
+                ChatMessage(
+                    chat_id=chat_id,
+                    role="user",
+                    content=user_content,
+                    created_at=now,
+                ),
+                ChatMessage(
+                    chat_id=chat_id,
+                    role="assistant",
+                    content=assistant_content,
+                    citations=citations,
+                    retrieval_mode=retrieval_mode,
+                    created_at=now,
+                ),
+            ]
         )
-        if existing:
-            existing.title = title
-            existing.source = source
-            existing.updated_at = now
-            existing.messages.extend([user_message, assistant_message])
-            await existing.save()
+        existing = await ChatHistory.find_one({"chat_id": chat_id})
+        if existing is None:
+            await ChatHistory(
+                chat_id=chat_id,
+                title=title,
+                source=source,
+                status="ready",
+                message_count=2,
+                updated_at=now,
+            ).insert()
             return
-        await ChatHistory(
-            chat_id=chat_id,
-            title=title,
-            source=source,
-            status="ready",
-            messages=[user_message, assistant_message],
-            updated_at=now,
-        ).insert()
+        existing.title = title
+        existing.source = source
+        existing.updated_at = now
+        existing.message_count = max(existing.message_count, 0) + 2
+        await existing.save()
 
     async def list_chats(self, *, limit: int, offset: int) -> list[dict[str, Any]]:
         cursor = (
@@ -62,7 +73,7 @@ class ChatHistoryRepository:
                     "source": item.source,
                     "updated_at": item.updated_at.isoformat(),
                     "status": item.status,
-                    "messages": len(item.messages),
+                    "messages": item.message_count,
                 }
             )
         return chats
@@ -70,11 +81,13 @@ class ChatHistoryRepository:
     async def get_messages(self, chat_id: str) -> list[dict[str, Any]]:
         if not chat_id:
             return []
-        item = await ChatHistory.find_one({"chat_id": chat_id})
-        if not item:
-            return []
         payload: list[dict[str, Any]] = []
-        for message in item.messages:
+        rows = (
+            await ChatMessage.find({"chat_id": chat_id})
+            .sort("created_at")
+            .to_list()
+        )
+        for message in rows:
             record = {
                 "role": message.role,
                 "content": message.content,

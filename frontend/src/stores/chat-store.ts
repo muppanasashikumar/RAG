@@ -11,14 +11,46 @@ import type {
 
 import { useSidebarStore } from "@/stores/sidebar-store";
 
-let streamAbortController: AbortController | null = null;
+const streamAbortControllers = new Map<string, AbortController>();
+const streamReaders = new Map<string, ReadableStreamDefaultReader<Uint8Array>>();
+const streamStopRequests = new Set<string>();
+let loadConversationRequestId = 0;
+const activeStreamSessions = new Map<
+  string,
+  {
+    userMessage: Message;
+    assistantMessage: Message;
+  }
+>();
 
-function setStreamController(controller: AbortController | null) {
-  streamAbortController = controller;
+function setStreamController(chatId: string, controller: AbortController | null) {
+  if (controller) {
+    streamAbortControllers.set(chatId, controller);
+    return;
+  }
+  streamAbortControllers.delete(chatId);
 }
 
-function abortInFlightStream() {
-  streamAbortController?.abort();
+function setStreamReader(chatId: string, reader: ReadableStreamDefaultReader<Uint8Array> | null) {
+  if (reader) {
+    streamReaders.set(chatId, reader);
+    return;
+  }
+  streamReaders.delete(chatId);
+}
+
+function abortStream(chatId: string) {
+  streamAbortControllers.get(chatId)?.abort();
+  const reader = streamReaders.get(chatId);
+  if (reader) {
+    void reader.cancel().catch(() => undefined);
+  }
+}
+
+function abortAllStreams() {
+  for (const chatId of streamAbortControllers.keys()) {
+    abortStream(chatId);
+  }
 }
 
 function sleep(ms: number) {
@@ -85,6 +117,22 @@ function buildBackendUrl(path: string): string {
     return `${normalizedBase}${normalizedPath}`;
   }
   return `${normalizedBase}/api/v1${normalizedPath}`;
+}
+
+function withActiveStreamMessages(chatId: string, history: Message[]): Message[] {
+  const session = activeStreamSessions.get(chatId);
+  if (!session) {
+    return history;
+  }
+  const seenIds = new Set(history.map((item) => item.id));
+  const merged = [...history];
+  if (!seenIds.has(session.userMessage.id)) {
+    merged.push(session.userMessage);
+  }
+  if (!seenIds.has(session.assistantMessage.id)) {
+    merged.push(session.assistantMessage);
+  }
+  return merged;
 }
 
 type ChatState = {
@@ -189,17 +237,47 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setPrompt: (prompt) => set({ prompt }),
 
   stopStreaming: () => {
-    abortInFlightStream();
+    const activeChatId = useSidebarStore.getState().activeChat.id;
+    if (!activeChatId || activeChatId === "new") {
+      return;
+    }
+    streamStopRequests.add(activeChatId);
+    abortStream(activeChatId);
+    const activeStreamSession = activeStreamSessions.get(activeChatId);
+    if (activeStreamSession) {
+      activeStreamSessions.set(activeChatId, {
+        ...activeStreamSession,
+        assistantMessage: {
+          ...activeStreamSession.assistantMessage,
+          content: activeStreamSession.assistantMessage.content
+            ? `${activeStreamSession.assistantMessage.content}\n\n(Stopped.)`
+            : "Stopped before any tokens arrived.",
+          isStreaming: false,
+        },
+      });
+    }
+    set((s) => ({
+      messages: s.messages.map((m) =>
+        m.role === "assistant" && m.isStreaming
+          ? {
+              ...m,
+              isStreaming: false,
+              content: m.content ? `${m.content}\n\n(Stopped.)` : "Stopped before any tokens arrived.",
+            }
+          : m,
+      ),
+    }));
   },
 
   dispose: () => {
-    abortInFlightStream();
-    setStreamController(null);
+    abortAllStreams();
+    streamAbortControllers.clear();
+    streamReaders.clear();
+    streamStopRequests.clear();
+    activeStreamSessions.clear();
   },
 
   newChat: () => {
-    abortInFlightStream();
-    setStreamController(null);
     const { uploadedFileNames } = get();
     const sourceLabel = uploadedFileNames.length > 0 ? uploadedFileNames[0] : "No document uploaded";
     useSidebarStore.getState().setActiveChat({
@@ -218,6 +296,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ messages: [] });
       return;
     }
+    const requestId = ++loadConversationRequestId;
     try {
       const response = await fetch(
         `${BACKEND_API_URL}/api/v1/rag/chats/${encodeURIComponent(chatId)}/messages`,
@@ -311,15 +390,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
             })
             .filter((message): message is Message => message !== null)
         : [];
-      set({ messages: history });
+      if (requestId !== loadConversationRequestId) {
+        return;
+      }
+      set({ messages: withActiveStreamMessages(chatId, history) });
     } catch {
+      if (requestId !== loadConversationRequestId) {
+        return;
+      }
+      const fallbackMessages: Message[] = [
+        {
+          id: uuidv4(),
+          role: "assistant",
+          content: "Unable to load this conversation right now.",
+        },
+      ];
       set({
         messages: [
-          {
-            id: uuidv4(),
-            role: "assistant",
-            content: "Unable to load this conversation right now.",
-          },
+          ...withActiveStreamMessages(chatId, fallbackMessages),
         ],
       });
     }
@@ -335,10 +423,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
 
-    abortInFlightStream();
-    const controller = new AbortController();
-    setStreamController(controller);
-
     const userContent = prompt.trim();
     const userId = uuidv4();
     const assistantId = uuidv4();
@@ -346,30 +430,43 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const activeChat = useSidebarStore.getState().activeChat;
 
     const resolvedChatId = activeChat.id === "new" ? `chat-${userId}` : activeChat.id;
-    useSidebarStore.getState().upsertRecentChat({
+    if (streamAbortControllers.has(resolvedChatId)) {
+      // Avoid two overlapping requests for the same chat.
+      return;
+    }
+    streamStopRequests.delete(resolvedChatId);
+    const controller = new AbortController();
+    setStreamController(resolvedChatId, controller);
+    useSidebarStore.getState().setActiveChat({
       id: resolvedChatId,
       title: userContent.length > 64 ? `${userContent.slice(0, 64).trimEnd()}...` : userContent,
       source: uploadedFileNames[0] || "Indexed documents",
       updatedAt: toRecentTimestampLabel(),
       status: "ready",
-      messages: Math.max(activeChat.messages + 1, 1),
+      messages: activeChat.messages,
     });
 
     set({ prompt: "" });
+    const userMessage: Message = { id: userId, role: "user", content: userContent };
+    const assistantMessage: Message = {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+      isStreaming: true,
+      reasoningSteps: DEFAULT_PROCESSING_STEPS.map((step, index) => ({
+        ...step,
+        status: index === 0 ? "in_progress" : "pending",
+      })),
+    };
+    activeStreamSessions.set(resolvedChatId, {
+      userMessage,
+      assistantMessage,
+    });
     set((s) => ({
       messages: [
         ...s.messages,
-        { id: userId, role: "user" as const, content: userContent },
-        {
-          id: assistantId,
-          role: "assistant" as const,
-          content: "",
-          isStreaming: true,
-          reasoningSteps: DEFAULT_PROCESSING_STEPS.map((step, index) => ({
-            ...step,
-            status: index === 0 ? "in_progress" : "pending",
-          })),
-        },
+        userMessage,
+        assistantMessage,
       ],
     }));
 
@@ -422,6 +519,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       const reader = response.body.getReader();
+      setStreamReader(resolvedChatId, reader);
       const decoder = new TextDecoder();
       let streamBuffer = "";
       let accumulated = "";
@@ -517,6 +615,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
           }
           if (parsed?.type === "token" && typeof parsed.content === "string") {
             accumulated += parsed.content;
+            const streamSession = activeStreamSessions.get(resolvedChatId);
+            if (streamSession) {
+              activeStreamSessions.set(resolvedChatId, {
+                ...streamSession,
+                assistantMessage: {
+                  ...streamSession.assistantMessage,
+                  content: accumulated,
+                },
+              });
+            }
             set((s) => ({
               messages: s.messages.map((m) =>
                 m.id === assistantId ? { ...m, content: accumulated } : m,
@@ -559,26 +667,79 @@ export const useChatStore = create<ChatState>((set, get) => ({
             : m,
         ),
       }));
+      const finalizedSession = activeStreamSessions.get(resolvedChatId);
+      if (finalizedSession) {
+        activeStreamSessions.set(resolvedChatId, {
+          ...finalizedSession,
+          assistantMessage: {
+            ...finalizedSession.assistantMessage,
+            content: accumulated,
+            isStreaming: false,
+            citations: dedupedCitations,
+            retrievalMode: streamedRetrievalMode,
+            reasoningSteps: DEFAULT_PROCESSING_STEPS.map((entry) => ({ ...entry, status: "completed" })),
+          },
+        });
+      }
+      const nextMessageCount = get().messages.length;
+      useSidebarStore.getState().upsertRecentChat({
+        id: resolvedChatId,
+        title: userContent.length > 64 ? `${userContent.slice(0, 64).trimEnd()}...` : userContent,
+        source: uploadedFileNames[0] || "Indexed documents",
+        updatedAt: toRecentTimestampLabel(),
+        status: "ready",
+        messages: nextMessageCount,
+      });
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        set((s) => ({
-          messages: s.messages.map((m) =>
-            m.id === assistantId
-              ? {
-                  ...m,
-                  content: m.content
-                    ? `${m.content}\n\n(Stopped.)`
-                    : "Stopped before any tokens arrived.",
-                  isStreaming: false,
-                }
-              : m,
-          ),
-        }));
+      if (
+        (error instanceof DOMException && error.name === "AbortError") ||
+        controller.signal.aborted
+      ) {
+        const wasUserStopRequested = streamStopRequests.has(resolvedChatId);
+        if (!wasUserStopRequested) {
+          const streamSession = activeStreamSessions.get(resolvedChatId);
+          if (streamSession) {
+            activeStreamSessions.set(resolvedChatId, {
+              ...streamSession,
+              assistantMessage: {
+                ...streamSession.assistantMessage,
+                content: streamSession.assistantMessage.content
+                  ? `${streamSession.assistantMessage.content}\n\n(Stopped.)`
+                  : "Stopped before any tokens arrived.",
+                isStreaming: false,
+              },
+            });
+          }
+          set((s) => ({
+            messages: s.messages.map((m) =>
+              m.id === assistantId
+                ? {
+                    ...m,
+                    content: m.content
+                      ? `${m.content}\n\n(Stopped.)`
+                      : "Stopped before any tokens arrived.",
+                    isStreaming: false,
+                  }
+                : m,
+            ),
+          }));
+        }
         return;
       }
 
       const fallback =
         error instanceof Error ? error.message : "Something went wrong while streaming the reply.";
+      const streamSession = activeStreamSessions.get(resolvedChatId);
+      if (streamSession) {
+        activeStreamSessions.set(resolvedChatId, {
+          ...streamSession,
+          assistantMessage: {
+            ...streamSession.assistantMessage,
+            content: streamSession.assistantMessage.content || fallback,
+            isStreaming: false,
+          },
+        });
+      }
       set((s) => ({
         messages: s.messages.map((m) =>
           m.id === assistantId
@@ -588,9 +749,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }));
     } finally {
       clearInterval(progressTimer);
-      if (streamAbortController === controller) {
-        setStreamController(null);
+      setStreamReader(resolvedChatId, null);
+      streamStopRequests.delete(resolvedChatId);
+      if (streamAbortControllers.get(resolvedChatId) === controller) {
+        setStreamController(resolvedChatId, null);
       }
+      activeStreamSessions.delete(resolvedChatId);
     }
   },
 }));

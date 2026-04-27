@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
-from typing import Any, Literal
+from typing import Any, Awaitable, Callable, Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -44,6 +45,7 @@ Output requirements:
 - You MUST return data matching the structured schema exactly.
 - The `answer` must be plain markdown text for end users.
 - Prefer short sections and bullet points when useful.
+- Do not add extra vertical whitespace; never emit multiple consecutive blank lines.
 - Mention uncertainty clearly when evidence is weak.
 - Do not mention internal implementation details.
 """.strip()
@@ -104,6 +106,7 @@ class RagService:
         query: str,
         file: str | None = None,
         chat_history: list[dict[str, Any]] | None = None,
+        should_abort: Callable[[], Awaitable[bool]] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Yield streaming events describing tokens and final citations."""
         normalized_query = (query or "").strip()
@@ -120,10 +123,14 @@ class RagService:
             return
 
         try:
+            if await self._is_aborted(should_abort):
+                return
             docs, mode = await asyncio.wait_for(
                 self._retrieve(query=normalized_query, file=file),
                 timeout=_RETRIEVAL_TIMEOUT_SECONDS,
             )
+            if await self._is_aborted(should_abort):
+                return
 
             if file and not docs:
                 yield {
@@ -146,22 +153,24 @@ class RagService:
 
             emitted = False
             try:
-                structured = await asyncio.to_thread(
-                    self._llm.invoke_structured,
-                    messages,
-                    schema=RagStructuredAnswer,
+                structured = await self._invoke_structured_with_abort(
+                    messages=messages,
+                    should_abort=should_abort,
                 )
-                formatted = self._format_structured_answer(structured).strip()
-                if formatted:
-                    emitted = True
-                    yield {"type": "token", "content": formatted}
+                if structured is not None:
+                    formatted = self._format_structured_answer(structured).strip()
+                    if formatted:
+                        emitted = True
+                        yield {"type": "token", "content": formatted}
             except Exception:
                 logger.warning("Structured output failed; falling back to token stream", exc_info=True)
 
             if not emitted:
-                async for token in self._stream_llm_tokens(messages):
+                async for token in self._stream_llm_tokens(messages, should_abort=should_abort):
                     yield {"type": "token", "content": token}
 
+            if await self._is_aborted(should_abort):
+                return
             yield {"type": "citations", "citations": citations, "retrieval_mode": mode}
         except TimeoutError:
             logger.warning("Timed out while generating answer", extra={"file": file})
@@ -216,9 +225,17 @@ class RagService:
             reranked.append(doc)
         return reranked
 
-    async def _stream_llm_tokens(self, messages: list[BaseMessage]) -> AsyncIterator[str]:
+    async def _stream_llm_tokens(
+        self,
+        messages: list[BaseMessage],
+        *,
+        should_abort: Callable[[], Awaitable[bool]] | None = None,
+    ) -> AsyncIterator[str]:
         stream = self._llm.astream_messages(messages)
         while True:
+            if await self._is_aborted(should_abort):
+                await stream.aclose()
+                break
             try:
                 token = await asyncio.wait_for(
                     anext(stream),
@@ -227,6 +244,39 @@ class RagService:
             except StopAsyncIteration:
                 break
             yield token
+
+    async def _invoke_structured_with_abort(
+        self,
+        *,
+        messages: list[BaseMessage],
+        should_abort: Callable[[], Awaitable[bool]] | None,
+    ) -> RagStructuredAnswer | None:
+        task = asyncio.create_task(
+            self._llm.ainvoke_structured(messages, schema=RagStructuredAnswer)
+        )
+        try:
+            while not task.done():
+                if await self._is_aborted(should_abort):
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+                    return None
+                await asyncio.sleep(0.1)
+            return await task
+        finally:
+            if not task.done():
+                task.cancel()
+
+    @staticmethod
+    async def _is_aborted(
+        should_abort: Callable[[], Awaitable[bool]] | None,
+    ) -> bool:
+        if should_abort is None:
+            return False
+        try:
+            return await should_abort()
+        except Exception:
+            return True
 
     def _build_messages(
         self,

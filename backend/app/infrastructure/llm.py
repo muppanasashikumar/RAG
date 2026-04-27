@@ -47,6 +47,15 @@ class LLMClient:
         structured_llm = self._client.with_structured_output(schema)
         return structured_llm.invoke(messages)
 
+    async def ainvoke_structured(
+        self,
+        messages: list[BaseMessage],
+        *,
+        schema: type[StructuredModelT],
+    ) -> StructuredModelT:
+        structured_llm = self._client.with_structured_output(schema)
+        return await structured_llm.ainvoke(messages)
+
     @staticmethod
     def _extract_text(content: object) -> Iterator[str]:
         if isinstance(content, str):

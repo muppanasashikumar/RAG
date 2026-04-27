@@ -6,7 +6,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.core.dependencies import get_chat_history_service, get_rag_service
@@ -18,6 +18,7 @@ router = APIRouter(tags=["chat"])
 
 @router.post("/chat/stream")
 async def chat_stream(
+    request: Request,
     query: str = Form(...),
     file: UploadFile | None = File(None),
     chat_id: str | None = Form(None),
@@ -37,19 +38,27 @@ async def chat_stream(
             query=query.strip(),
             file=file_name,
             chat_history=chat_history,
+            should_abort=request.is_disconnected,
         )
         assistant_content = ""
         citations: list[dict[str, Any]] = []
         retrieval_mode: str | None = None
-        async for event in events:
-            if event.get("type") == "token" and isinstance(event.get("content"), str):
-                assistant_content += event["content"]
-            if event.get("type") == "citations":
-                raw_citations = event.get("citations")
-                citations = raw_citations if isinstance(raw_citations, list) else []
-                mode = event.get("retrieval_mode")
-                retrieval_mode = mode if isinstance(mode, str) else None
-            yield f"data: {json.dumps(event)}\n\n"
+        try:
+            async for event in events:
+                if await request.is_disconnected():
+                    break
+                if event.get("type") == "token" and isinstance(event.get("content"), str):
+                    assistant_content += event["content"]
+                if event.get("type") == "citations":
+                    raw_citations = event.get("citations")
+                    citations = raw_citations if isinstance(raw_citations, list) else []
+                    mode = event.get("retrieval_mode")
+                    retrieval_mode = mode if isinstance(mode, str) else None
+                yield f"data: {json.dumps(event)}\n\n"
+        finally:
+            await events.aclose()
+        if await request.is_disconnected():
+            return
         if resolved_chat_id and assistant_content.strip():
             title = query.strip()
             if len(title) > 64:

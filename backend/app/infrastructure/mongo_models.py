@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from beanie import Document
-from pydantic import BaseModel, Field
+from pydantic import Field
 from pymongo import ASCENDING, IndexModel
 
 from app.core.config import settings
@@ -56,25 +56,35 @@ class VectorChunk(Document):
         ]
 
 
-class ChatMessageRecord(BaseModel):
-    role: str
-    content: str
-    citations: list[dict[str, Any]] = Field(default_factory=list)
-    retrieval_mode: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
 class ChatHistory(Document):
     chat_id: str
     title: str
     source: str
     status: str = "ready"
-    messages: list[ChatMessageRecord] = Field(default_factory=list)
+    message_count: int = 0
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     class Settings:
         name = "chat_history"
         indexes = [
             IndexModel([("chat_id", ASCENDING)], unique=True),
-            IndexModel([("updated_at", ASCENDING)]),
+            IndexModel([("updated_at", -1)]),
+        ]
+
+
+class ChatMessage(Document):
+    chat_id: str
+    role: str
+    content: str
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+    retrieval_mode: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    class Settings:
+        name = "chat_messages"
+        indexes = [
+            IndexModel(
+                [("chat_id", ASCENDING), ("created_at", ASCENDING)],
+                name="idx_chat_id_created_at",
+            ),
         ]

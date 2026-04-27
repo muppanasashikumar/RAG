@@ -1,19 +1,10 @@
 "use client";
 
-import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { useChatStore } from "@/stores/chat-store";
 
 export function useChatWorkspace() {
-  const dispose = useChatStore((s) => s.dispose);
-
-  useEffect(() => {
-    return () => {
-      dispose();
-    };
-  }, [dispose]);
-
   return useChatStore(
     useShallow((s) => ({
       messages: s.messages,

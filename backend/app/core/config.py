@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     DOCUMENTS_DIR: str = "documents_storage"
 
     EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
+    EMBEDDING_CACHE_SIZE: int = 20_000
     RERANKER_ENABLED: bool = False
     RERANKER_MODEL: str = "BAAI/bge-reranker-base"
     LLM_MODEL: str = "openai/gpt-oss-20b"
