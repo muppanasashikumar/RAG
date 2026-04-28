@@ -23,19 +23,34 @@ if (typeof window !== "undefined" && !window.matchMedia) {
   });
 }
 
-// Silence Base UI's use of IntersectionObserver / ResizeObserver if they come up.
-class NoopObserver {
-  observe() {}
-  unobserve() {}
+// Silence Base UI's use of IntersectionObserver / ResizeObserver in jsdom.
+class NoopResizeObserver implements ResizeObserver {
+  constructor(_callback: ResizeObserverCallback) {}
+  observe(_target: Element, _options?: ResizeObserverOptions) {}
+  unobserve(_target: Element) {}
   disconnect() {}
-  takeRecords() {
+}
+
+class NoopIntersectionObserver implements IntersectionObserver {
+  readonly root: Element | Document | null = null;
+  readonly rootMargin = "0px";
+  readonly thresholds = [0];
+
+  constructor(
+    _callback: IntersectionObserverCallback,
+    _options?: IntersectionObserverInit,
+  ) {}
+
+  disconnect() {}
+  observe(_target: Element) {}
+  takeRecords(): IntersectionObserverEntry[] {
     return [];
   }
+  unobserve(_target: Element) {}
 }
 
 if (typeof window !== "undefined") {
-  // @ts-expect-error polyfill for jsdom
-  window.ResizeObserver = window.ResizeObserver ?? NoopObserver;
-  // @ts-expect-error polyfill for jsdom
-  window.IntersectionObserver = window.IntersectionObserver ?? NoopObserver;
+  window.ResizeObserver = window.ResizeObserver ?? NoopResizeObserver;
+  window.IntersectionObserver =
+    window.IntersectionObserver ?? NoopIntersectionObserver;
 }
