@@ -1,15 +1,18 @@
 import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { starterMessages } from "@/components/rag";
 import { useAIState } from "@/hooks/use-ai-state";
-import { useChatStore } from "@/stores/chat-store";
+import { useChatMessagesStore } from "@/stores/chat-messages-store";
+import { useChatStreamingStore } from "@/stores/chat-streaming-store";
+import { useSidebarStore } from "@/stores/sidebar-store";
 
-const initial = useChatStore.getState();
+const initialMessagesState = useChatMessagesStore.getState();
+const initialSidebarState = useSidebarStore.getState();
 
 describe("useAIState", () => {
   beforeEach(() => {
-    useChatStore.setState({ ...initial, messages: [...starterMessages] }, true);
+    useChatMessagesStore.setState(initialMessagesState, true);
+    useSidebarStore.setState(initialSidebarState, true);
   });
 
   it("reports isReplyStreaming=false when no assistant message is streaming", () => {
@@ -18,9 +21,8 @@ describe("useAIState", () => {
   });
 
   it("reports isReplyStreaming=true when any assistant message is streaming", () => {
-    useChatStore.setState({
+    useChatMessagesStore.setState({
       messages: [
-        ...starterMessages,
         { id: "x", role: "assistant", content: "", isStreaming: true },
       ],
     });
@@ -31,21 +33,21 @@ describe("useAIState", () => {
   it("exposes store actions", () => {
     const { result } = renderHook(() => useAIState());
     expect(result.current.handleSubmit).toBe(
-      useChatStore.getState().submitPrompt,
+      useChatMessagesStore.getState().submitPrompt,
     );
-    expect(result.current.handleStopStreaming).toBe(
-      useChatStore.getState().stopStreaming,
-    );
-    expect(result.current.handleNewChat).toBe(useChatStore.getState().newChat);
+    expect(result.current.handleNewChat).toBe(useChatMessagesStore.getState().newChat);
   });
 
-  it("calls dispose on unmount", () => {
-    const disposeSpy = vi.fn();
-    useChatStore.setState({ dispose: disposeSpy });
+  it("handleStopStreaming delegates to streaming store for active chat", () => {
+    const stopSpy = vi.fn();
+    useChatStreamingStore.setState({ stopStreamingForChat: stopSpy });
+    useSidebarStore.setState({
+      activeChat: { ...useSidebarStore.getState().activeChat, id: "chat-123" },
+    });
 
-    const { unmount } = renderHook(() => useAIState());
-    unmount();
+    const { result } = renderHook(() => useAIState());
+    result.current.handleStopStreaming();
 
-    expect(disposeSpy).toHaveBeenCalledOnce();
+    expect(stopSpy).toHaveBeenCalledWith("chat-123", useChatMessagesStore.setState);
   });
 });

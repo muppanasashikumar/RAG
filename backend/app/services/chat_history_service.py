@@ -21,8 +21,8 @@ class ChatHistoryService:
         assistant_content: str,
         citations: list[dict[str, Any]],
         retrieval_mode: str | None,
-    ) -> None:
-        await self._repository.append_turn(
+    ) -> str | None:
+        return await self._repository.append_turn(
             chat_id=chat_id,
             title=title,
             source=source,
@@ -37,3 +37,29 @@ class ChatHistoryService:
 
     async def get_chat_messages(self, *, chat_id: str) -> list[dict[str, Any]]:
         return await self._repository.get_messages(chat_id)
+
+    async def set_message_feedback(
+        self,
+        *,
+        chat_id: str,
+        message_id: str,
+        feedback: str | None,
+    ) -> bool:
+        return await self._repository.set_message_feedback(
+            chat_id=chat_id,
+            message_id=message_id,
+            feedback=feedback,
+        )
+
+    async def increment_message_action(
+        self,
+        *,
+        chat_id: str,
+        message_id: str,
+        action: str,
+    ) -> bool:
+        return await self._repository.increment_message_action(
+            chat_id=chat_id,
+            message_id=message_id,
+            action=action,
+        )

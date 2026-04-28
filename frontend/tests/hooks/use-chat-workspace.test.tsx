@@ -1,36 +1,46 @@
 import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { starterMessages } from "@/components/rag";
 import { useChatWorkspace } from "@/hooks/use-chat-workspace";
-import { useChatStore } from "@/stores/chat-store";
+import { useChatInputStore } from "@/stores/chat-input-store";
+import { useChatMessagesStore } from "@/stores/chat-messages-store";
+import { useChatStreamingStore } from "@/stores/chat-streaming-store";
+import { useChatUploadStore } from "@/stores/chat-upload-store";
+import { useSidebarStore } from "@/stores/sidebar-store";
 
-const initial = useChatStore.getState();
+const initialInputState = useChatInputStore.getState();
+const initialMessagesState = useChatMessagesStore.getState();
+const initialUploadState = useChatUploadStore.getState();
+const initialSidebarState = useSidebarStore.getState();
 
 describe("useChatWorkspace", () => {
   beforeEach(() => {
-    useChatStore.setState({ ...initial, messages: [...starterMessages] }, true);
+    useChatInputStore.setState(initialInputState, true);
+    useChatMessagesStore.setState(initialMessagesState, true);
+    useChatUploadStore.setState(initialUploadState, true);
+    useSidebarStore.setState(initialSidebarState, true);
   });
 
   it("aggregates chat state, prompt state, and AI actions", () => {
+    useChatMessagesStore.setState({
+      messages: [{ id: "m1", role: "assistant", content: "hello" }],
+    });
+    useChatUploadStore.setState({ uploadedFileNames: ["security-policy.pdf"] });
+
     const { result } = renderHook(() => useChatWorkspace());
-    expect(result.current.messages).toEqual(starterMessages);
+    expect(result.current.messages).toEqual([{ id: "m1", role: "assistant", content: "hello" }]);
     expect(result.current.prompt).toBe("");
-    expect(result.current.uploadedFileName).toBe("security-policy.pdf");
+    expect(result.current.uploadedFileNames).toEqual(["security-policy.pdf"]);
     expect(result.current.isReplyStreaming).toBe(false);
     expect(result.current.handleSubmit).toBe(
-      useChatStore.getState().submitPrompt,
+      useChatMessagesStore.getState().submitPrompt,
     );
-    expect(result.current.handleStopStreaming).toBe(
-      useChatStore.getState().stopStreaming,
-    );
-    expect(result.current.handleNewChat).toBe(useChatStore.getState().newChat);
+    expect(result.current.handleNewChat).toBe(useChatMessagesStore.getState().newChat);
   });
 
   it("reflects streaming state derived from messages", () => {
-    useChatStore.setState({
+    useChatMessagesStore.setState({
       messages: [
-        ...starterMessages,
         { id: "s", role: "assistant", content: "", isStreaming: true },
       ],
     });
@@ -38,13 +48,16 @@ describe("useChatWorkspace", () => {
     expect(result.current.isReplyStreaming).toBe(true);
   });
 
-  it("calls dispose on unmount", () => {
-    const disposeSpy = vi.fn();
-    useChatStore.setState({ dispose: disposeSpy });
+  it("handleStopStreaming delegates to streaming store for active chat", () => {
+    const stopSpy = vi.fn();
+    useChatStreamingStore.setState({ stopStreamingForChat: stopSpy });
+    useSidebarStore.setState({
+      activeChat: { ...useSidebarStore.getState().activeChat, id: "chat-xyz" },
+    });
 
-    const { unmount } = renderHook(() => useChatWorkspace());
-    unmount();
+    const { result } = renderHook(() => useChatWorkspace());
+    result.current.handleStopStreaming();
 
-    expect(disposeSpy).toHaveBeenCalledOnce();
+    expect(stopSpy).toHaveBeenCalledWith("chat-xyz", useChatMessagesStore.setState);
   });
 });

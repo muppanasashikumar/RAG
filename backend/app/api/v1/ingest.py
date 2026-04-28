@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, UploadFile
 
-from app.core.dependencies import get_ingestion_service
+from app.core.dependencies import get_ingestion_service, require_authenticated_request
 from app.schemas.responses.ingest import IngestResponse
 from app.services.ingestion_service import IngestionService
 
-router = APIRouter(tags=["ingest"])
+router = APIRouter(tags=["ingest"], dependencies=[Depends(require_authenticated_request)])
 
 
 @router.post("/ingest", response_model=IngestResponse)

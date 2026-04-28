@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from beanie import PydanticObjectId
 from app.infrastructure.mongo_models import ChatHistory, ChatMessage
 
 
@@ -19,26 +20,23 @@ class ChatHistoryRepository:
         assistant_content: str,
         citations: list[dict[str, Any]],
         retrieval_mode: str | None,
-    ) -> None:
+    ) -> str | None:
         now = datetime.now(UTC)
-        await ChatMessage.insert_many(
-            [
-                ChatMessage(
-                    chat_id=chat_id,
-                    role="user",
-                    content=user_content,
-                    created_at=now,
-                ),
-                ChatMessage(
-                    chat_id=chat_id,
-                    role="assistant",
-                    content=assistant_content,
-                    citations=citations,
-                    retrieval_mode=retrieval_mode,
-                    created_at=now,
-                ),
-            ]
+        user_message = ChatMessage(
+            chat_id=chat_id,
+            role="user",
+            content=user_content,
+            created_at=now,
         )
+        assistant_message = ChatMessage(
+            chat_id=chat_id,
+            role="assistant",
+            content=assistant_content,
+            citations=citations,
+            retrieval_mode=retrieval_mode,
+            created_at=now,
+        )
+        await ChatMessage.insert_many([user_message, assistant_message])
         existing = await ChatHistory.find_one({"chat_id": chat_id})
         if existing is None:
             await ChatHistory(
@@ -49,12 +47,13 @@ class ChatHistoryRepository:
                 message_count=2,
                 updated_at=now,
             ).insert()
-            return
+            return str(assistant_message.id) if assistant_message.id is not None else None
         existing.title = title
         existing.source = source
         existing.updated_at = now
         existing.message_count = max(existing.message_count, 0) + 2
         await existing.save()
+        return str(assistant_message.id) if assistant_message.id is not None else None
 
     async def list_chats(self, *, limit: int, offset: int) -> list[dict[str, Any]]:
         cursor = (
@@ -89,6 +88,7 @@ class ChatHistoryRepository:
         )
         for message in rows:
             record = {
+                "message_id": str(message.id),
                 "role": message.role,
                 "content": message.content,
             }
@@ -96,5 +96,48 @@ class ChatHistoryRepository:
                 record["citations"] = message.citations
                 if message.retrieval_mode:
                     record["retrieval_mode"] = message.retrieval_mode
+                if message.feedback in {"like", "dislike"}:
+                    record["feedback"] = message.feedback
             payload.append(record)
         return payload
+
+    async def set_message_feedback(
+        self,
+        *,
+        chat_id: str,
+        message_id: str,
+        feedback: str | None,
+    ) -> bool:
+        try:
+            object_id = PydanticObjectId(message_id)
+        except Exception:
+            return False
+        message = await ChatMessage.find_one({"_id": object_id, "chat_id": chat_id, "role": "assistant"})
+        if message is None:
+            return False
+        message.feedback = feedback if feedback in {"like", "dislike"} else None
+        await message.save()
+        return True
+
+    async def increment_message_action(
+        self,
+        *,
+        chat_id: str,
+        message_id: str,
+        action: str,
+    ) -> bool:
+        try:
+            object_id = PydanticObjectId(message_id)
+        except Exception:
+            return False
+        message = await ChatMessage.find_one({"_id": object_id, "chat_id": chat_id, "role": "assistant"})
+        if message is None:
+            return False
+        if action == "copy":
+            message.copied_count = max(message.copied_count, 0) + 1
+        elif action == "share":
+            message.shared_count = max(message.shared_count, 0) + 1
+        else:
+            return False
+        await message.save()
+        return True

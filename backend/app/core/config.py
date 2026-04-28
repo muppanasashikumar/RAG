@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     RERANKER_ENABLED: bool = False
     RERANKER_MODEL: str = "BAAI/bge-reranker-base"
     LLM_MODEL: str = "openai/gpt-oss-20b"
+    API_AUTH_TOKEN: str | None = None
+    CLERK_JWKS_URL: str | None = None
+    CLERK_ISSUER: str | None = None
+    CLERK_AUDIENCE: str | None = None
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_MAX_REQUESTS: int = 120
+    RATE_LIMIT_WINDOW_SECONDS: int = 60
 
     class Config:
         env_file = ".env"

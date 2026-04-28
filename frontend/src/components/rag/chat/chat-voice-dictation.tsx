@@ -44,6 +44,7 @@ export function ChatVoiceDictation({
   onPromptChange,
   isReplyStreaming,
   onListeningChange,
+  onBargeIn,
   children,
 }: ChatVoiceDictationProps) {
   const [hasHydrated, setHasHydrated] = useState(false);
@@ -104,7 +105,7 @@ export function ChatVoiceDictation({
   }, [finalTranscript, interimTranscript, isListening, onPromptChange]);
 
   const toggleVoice = useCallback(() => {
-    if (!safeSpeechSupported || isReplyStreaming) {
+    if (!safeSpeechSupported) {
       return;
     }
 
@@ -116,6 +117,10 @@ export function ChatVoiceDictation({
     }
 
     void (async () => {
+      if (isReplyStreaming) {
+        onBargeIn?.();
+      }
+
       if (typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia) {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -137,7 +142,7 @@ export function ChatVoiceDictation({
         setVoiceError("Could not start voice input.");
       }
     })();
-  }, [isListening, isReplyStreaming, prompt, resetTranscript, safeSpeechSupported]);
+  }, [isListening, isReplyStreaming, onBargeIn, prompt, resetTranscript, safeSpeechSupported]);
 
   const micControl = (
     <div className="relative shrink-0">
@@ -159,7 +164,7 @@ export function ChatVoiceDictation({
             ? "border-transparent bg-destructive text-destructive-foreground shadow-md hover:bg-destructive/90 focus-visible:border-destructive focus-visible:ring-destructive/25"
             : ""
         }`}
-        disabled={!safeSpeechSupported || isReplyStreaming}
+        disabled={!safeSpeechSupported}
         aria-pressed={safeIsListening}
         aria-label={safeIsListening ? "Stop voice input" : "Start voice input"}
         onClick={toggleVoice}

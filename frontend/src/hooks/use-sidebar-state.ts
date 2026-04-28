@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { getFilteredChats, useSidebarStore } from "@/stores/sidebar-store";
@@ -35,13 +35,6 @@ export function useSidebarState() {
       })),
     );
 
-  useEffect(() => {
-    if (isHydrated) {
-      return;
-    }
-    hydrateRecentChats();
-  }, [hydrateRecentChats, isHydrated]);
-
   const filteredChats = useMemo(() => getFilteredChats(query, recentChats), [query, recentChats]);
 
   return {
@@ -50,6 +43,8 @@ export function useSidebarState() {
     activeChat,
     setActiveChat,
     recentChats,
+    isHydrated,
+    hydrateRecentChats,
     hasMoreRecents,
     fetchMoreRecentChats,
     isSidebarCollapsed,

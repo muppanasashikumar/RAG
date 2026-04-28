@@ -42,11 +42,13 @@ function Harness({
   onPromptChange = () => {},
   isReplyStreaming = false,
   onListeningChange,
+  onBargeIn,
 }: {
   prompt?: string;
   onPromptChange?: (value: string) => void;
   isReplyStreaming?: boolean;
   onListeningChange?: (listening: boolean) => void;
+  onBargeIn?: () => void;
 }) {
   return (
     <ChatVoiceDictation
@@ -54,6 +56,7 @@ function Harness({
       onPromptChange={onPromptChange}
       isReplyStreaming={isReplyStreaming}
       onListeningChange={onListeningChange}
+      onBargeIn={onBargeIn}
     >
       {({ isListening, speechSupported, micControl }: ChatVoiceDictationRenderContext): ReactNode => (
         <div>
@@ -120,14 +123,32 @@ describe("ChatVoiceDictation", () => {
     expect(button).toBeDisabled();
   });
 
-  it("disables the mic button while a reply is streaming", async () => {
+  it("keeps the mic enabled while a reply is streaming for barge-in", async () => {
     render(<Harness isReplyStreaming />);
     await waitFor(() => {
       expect(screen.getByTestId("speech-supported").textContent).toBe("true");
     });
-    expect(
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
+  });
+
+  it("invokes barge-in callback when dictation starts during streaming", async () => {
+    const onBargeIn = vi.fn();
+    render(<Harness isReplyStreaming onBargeIn={onBargeIn} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("speech-supported").textContent).toBe("true"),
+    );
+
+    await userEvent.click(
       screen.getByRole("button", { name: "Start voice input" }),
-    ).toBeDisabled();
+    );
+
+    await waitFor(() => {
+      expect(startListening).toHaveBeenCalledWith({
+        continuous: true,
+        language: "en-US",
+      });
+    });
+    expect(onBargeIn).toHaveBeenCalledOnce();
   });
 
   it("starts listening on click and requests microphone access", async () => {

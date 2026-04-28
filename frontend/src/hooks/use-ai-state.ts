@@ -2,15 +2,24 @@
 
 import { useShallow } from "zustand/react/shallow";
 
-import { useChatStore } from "@/stores/chat-store";
+import { useChatMessagesStore } from "@/stores/chat";
+import { useChatStreamingStore } from "@/stores/chat";
+import { useSidebarStore } from "@/stores/sidebar-store";
 
 export function useAIState() {
-  return useChatStore(
+  const messageState = useChatMessagesStore(
     useShallow((s) => ({
       isReplyStreaming: s.messages.some((m) => m.role === "assistant" && m.isStreaming),
       handleSubmit: s.submitPrompt,
-      handleStopStreaming: s.stopStreaming,
       handleNewChat: s.newChat,
     })),
   );
+
+  return {
+    ...messageState,
+    handleStopStreaming: () => {
+      const activeChatId = useSidebarStore.getState().activeChat.id;
+      useChatStreamingStore.getState().stopStreamingForChat(activeChatId, useChatMessagesStore.setState);
+    },
+  };
 }

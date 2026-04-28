@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Avoid depending on browser APIs used by the voice dictation child component.
 vi.mock("@/components/rag/chat/chat-voice-dictation", () => ({
@@ -48,20 +48,43 @@ const baseMessages: Message[] = [
 
 function renderPanel(overrides: Partial<Parameters<typeof ChatPanel>[0]> = {}) {
   const props: Parameters<typeof ChatPanel>[0] = {
+    activeChatId: "chat-1",
     messages: baseMessages,
-    insights: ["Summarize", "Compare"],
     prompt: "",
     isReplyStreaming: false,
+    isIndexingDocuments: false,
+    isTtsEnabled: true,
     onPromptChange: vi.fn(),
-    onInsightClick: vi.fn(),
     onSubmit: vi.fn((e) => e.preventDefault()),
     onStopStreaming: vi.fn(),
+    onTtsEnabledChange: vi.fn(),
     ...overrides,
   };
   return { props, ...render(<ChatPanel {...props} />) };
 }
 
 describe("ChatPanel", () => {
+  beforeEach(() => {
+    Object.defineProperty(window, "speechSynthesis", {
+      configurable: true,
+      value: {
+        speak: vi.fn(),
+        cancel: vi.fn(),
+      },
+    });
+    Object.defineProperty(window, "SpeechSynthesisUtterance", {
+      configurable: true,
+      value: class {
+        text: string;
+        onend: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        constructor(text: string) {
+          this.text = text;
+        }
+      },
+    });
+  });
+
   it("renders each message and its citations", () => {
     renderPanel();
     expect(screen.getByText("Hello there")).toBeInTheDocument();
@@ -102,12 +125,6 @@ describe("ChatPanel", () => {
     expect(screen.queryByText("Send")).not.toBeInTheDocument();
   });
 
-  it("renders insight chips and forwards clicks through onInsightClick", async () => {
-    const { props } = renderPanel();
-    await userEvent.click(screen.getByRole("button", { name: "Summarize" }));
-    expect(props.onInsightClick).toHaveBeenCalledWith("Summarize");
-  });
-
   it("disables the Send button when the prompt is empty", () => {
     renderPanel();
     expect(
@@ -144,4 +161,26 @@ describe("ChatPanel", () => {
     );
     expect(onPromptChange).toHaveBeenCalledWith("a");
   });
+
+  it("does not auto-speak on render", () => {
+    renderPanel();
+    expect(window.speechSynthesis.speak).not.toHaveBeenCalled();
+  });
+
+  it("starts read aloud only when user clicks speaker while off", async () => {
+    const { props } = renderPanel({ isTtsEnabled: false });
+    expect(screen.getByText("Off")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Read aloud off" }));
+    expect(props.onTtsEnabledChange).toHaveBeenCalledWith(true);
+    expect(window.speechSynthesis.speak).toHaveBeenCalledOnce();
+  });
+
+  it("clicking the speaker toggle while on stops read aloud", async () => {
+    const { props } = renderPanel({ isTtsEnabled: true });
+    expect(screen.getByText("On")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Read aloud on" }));
+    expect(props.onTtsEnabledChange).toHaveBeenCalledWith(false);
+    expect(window.speechSynthesis.cancel).toHaveBeenCalled();
+  });
+
 });

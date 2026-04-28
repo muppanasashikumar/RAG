@@ -15,8 +15,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import router as v1_router
+from app.core.config import settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
+from app.core.rate_limit import RateLimitMiddleware
 from app.infrastructure.mongo import initialize_collections
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,12 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+    )
+    app.add_middleware(
+        RateLimitMiddleware,
+        enabled=settings.RATE_LIMIT_ENABLED,
+        max_requests=settings.RATE_LIMIT_MAX_REQUESTS,
+        window_seconds=settings.RATE_LIMIT_WINDOW_SECONDS,
     )
 
     register_exception_handlers(app)

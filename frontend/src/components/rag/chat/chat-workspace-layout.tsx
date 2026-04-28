@@ -1,22 +1,16 @@
 "use client";
 
-import { ChatSidebar } from "@/components/rag/sidebar/chat-sidebar";
+import { Children } from "react";
 import type { ChatWorkspaceLayoutProps } from "@/components/rag/chat/types";
 import { WorkspaceHeader } from "./workspace-header";
 
 export function ChatWorkspaceLayout({
   isSidebarCollapsed,
-  query,
-  onQueryChange,
-  activeChat,
-  filteredChats,
-  hasMoreRecents,
-  onLoadMoreRecents,
-  onSelectChat,
-  onNewChat,
-  onToggleSidebar,
+  activeChatTitle,
   children,
 }: ChatWorkspaceLayoutProps) {
+  const [sidebar, ...workspacePanels] = Children.toArray(children);
+
   return (
     <main className="h-dvh overflow-hidden bg-background text-foreground">
       <div
@@ -24,23 +18,14 @@ export function ChatWorkspaceLayout({
           isSidebarCollapsed ? "grid-cols-[96px_1fr]" : "grid-cols-[320px_1fr]"
         }`}
       >
-        <ChatSidebar
-          isSidebarCollapsed={isSidebarCollapsed}
-          query={query}
-          onQueryChange={onQueryChange}
-          activeChat={activeChat}
-          filteredChats={filteredChats}
-          hasMoreRecents={hasMoreRecents}
-          onLoadMoreRecents={onLoadMoreRecents}
-          onSelectChat={onSelectChat}
-          onNewChat={onNewChat}
-          onToggleSidebar={onToggleSidebar}
-        />
+        {sidebar}
 
         <section className="flex h-full min-h-0 flex-col overflow-hidden">
-          <WorkspaceHeader activeChatTitle={activeChat.title} />
+          <WorkspaceHeader activeChatTitle={activeChatTitle} />
 
-          <div className="grid min-h-0 flex-1 gap-5 overflow-hidden p-5 xl:grid-cols-[minmax(0,1fr)_360px]">{children}</div>
+          <div className="grid min-h-0 flex-1 gap-5 overflow-hidden p-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+            {workspacePanels}
+          </div>
         </section>
       </div>
     </main>

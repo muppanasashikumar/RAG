@@ -2,21 +2,37 @@
 
 import { useShallow } from "zustand/react/shallow";
 
-import { useChatStore } from "@/stores/chat-store";
+import { useChatInputStore } from "@/stores/chat";
+import { useChatMessagesStore } from "@/stores/chat";
+import { useChatUploadStore } from "@/stores/chat";
 
 export function useChatState() {
-  return useChatStore(
+  const messageState = useChatMessagesStore(
     useShallow((s) => ({
       messages: s.messages,
+      loadConversation: s.loadConversation,
+    })),
+  );
+  const inputState = useChatInputStore(
+    useShallow((s) => ({
       prompt: s.prompt,
       setPrompt: s.setPrompt,
+    })),
+  );
+  const uploadState = useChatUploadStore(
+    useShallow((s) => ({
       uploadedFiles: s.uploadedFiles,
       uploadedFileNames: s.uploadedFileNames,
       uploadStatuses: s.uploadStatuses,
       isBatchUploading: s.isBatchUploading,
       uploadBatchFiles: s.uploadBatchFiles,
       clearUploadedFiles: s.clearUploadedFiles,
-      loadConversation: s.loadConversation,
     })),
   );
+
+  return {
+    ...messageState,
+    ...inputState,
+    ...uploadState,
+  };
 }

@@ -4,16 +4,29 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
-from app.core.dependencies import get_chat_history_service, get_rag_service
+from app.core.dependencies import (
+    get_chat_history_service,
+    get_rag_service,
+    require_authenticated_request,
+)
 from app.services.rag_service import RagService
 from app.services.chat_history_service import ChatHistoryService
 
-router = APIRouter(tags=["chat"])
+router = APIRouter(tags=["chat"], dependencies=[Depends(require_authenticated_request)])
+
+
+class MessageFeedbackPayload(BaseModel):
+    feedback: Literal["like", "dislike"] | None = None
+
+
+class MessageActionPayload(BaseModel):
+    action: Literal["copy", "share"]
 
 
 @router.post("/chat/stream")
@@ -22,9 +35,11 @@ async def chat_stream(
     query: str = Form(...),
     file: UploadFile | None = File(None),
     chat_id: str | None = Form(None),
+    response_language: str | None = Form(None),
     service: RagService = Depends(get_rag_service),
     history_service: ChatHistoryService = Depends(get_chat_history_service),
 ) -> StreamingResponse:
+    _ = response_language
     file_name = file.filename if file else None
     resolved_chat_id = (chat_id or "").strip()
     chat_history = (
@@ -64,7 +79,7 @@ async def chat_stream(
             if len(title) > 64:
                 title = f"{title[:64].rstrip()}..."
             source = file_name or "Indexed documents"
-            await history_service.save_turn(
+            assistant_message_id = await history_service.save_turn(
                 chat_id=resolved_chat_id,
                 title=title or "Untitled document chat",
                 source=source,
@@ -73,6 +88,18 @@ async def chat_stream(
                 citations=citations,
                 retrieval_mode=retrieval_mode,
             )
+            if assistant_message_id:
+                yield (
+                    "data: "
+                    + json.dumps(
+                        {
+                            "type": "persisted",
+                            "chat_id": resolved_chat_id,
+                            "assistant_message_id": assistant_message_id,
+                        }
+                    )
+                    + "\n\n"
+                )
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -95,3 +122,37 @@ async def get_chat_messages(
 ) -> JSONResponse:
     messages = await history_service.get_chat_messages(chat_id=chat_id)
     return JSONResponse(content={"messages": messages})
+
+
+@router.post("/rag/chats/{chat_id}/messages/{message_id}/feedback")
+async def set_message_feedback(
+    chat_id: str,
+    message_id: str,
+    payload: MessageFeedbackPayload,
+    history_service: ChatHistoryService = Depends(get_chat_history_service),
+) -> JSONResponse:
+    updated = await history_service.set_message_feedback(
+        chat_id=chat_id,
+        message_id=message_id,
+        feedback=payload.feedback,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return JSONResponse(content={"ok": True, "feedback": payload.feedback})
+
+
+@router.post("/rag/chats/{chat_id}/messages/{message_id}/actions")
+async def track_message_action(
+    chat_id: str,
+    message_id: str,
+    payload: MessageActionPayload,
+    history_service: ChatHistoryService = Depends(get_chat_history_service),
+) -> JSONResponse:
+    tracked = await history_service.increment_message_action(
+        chat_id=chat_id,
+        message_id=message_id,
+        action=payload.action,
+    )
+    if not tracked:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return JSONResponse(content={"ok": True})

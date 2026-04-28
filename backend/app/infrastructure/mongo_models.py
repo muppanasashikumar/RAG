@@ -78,6 +78,9 @@ class ChatMessage(Document):
     content: str
     citations: list[dict[str, Any]] = Field(default_factory=list)
     retrieval_mode: str | None = None
+    feedback: str | None = None
+    copied_count: int = 0
+    shared_count: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     class Settings:

@@ -1,0 +1,19 @@
+services:
+  backend:
+    image: ${BACKEND_IMAGE}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.production
+
+  frontend:
+    image: ${FRONTEND_IMAGE}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    environment:
+      BACKEND_API_URL: http://backend:8000
+      NEXT_PUBLIC_BACKEND_API_URL: ${NEXT_PUBLIC_BACKEND_API_URL}

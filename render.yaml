@@ -1,0 +1,44 @@
+services:
+  - type: web
+    name: rag-backend
+    runtime: docker
+    plan: free
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: MONGO_URI
+        sync: false
+      - key: MONGO_DB_NAME
+        value: rag_db
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: documents
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_OBJECT_PREFIX
+        value: documents
+      - key: DOCUMENT_STORAGE_PROVIDER
+        value: supabase
+      - key: VECTOR_COLLECTION
+        value: vector_documents
+      - key: EMBEDDING_MODEL
+        value: BAAI/bge-small-en-v1.5
+      - key: RERANKER_ENABLED
+        value: "false"
+      - key: RERANKER_MODEL
+        value: BAAI/bge-reranker-base
+      - key: LLM_MODEL
+        value: openai/gpt-oss-20b
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: "120"
+      - key: RATE_LIMIT_WINDOW_SECONDS
+        value: "60"

@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from typing import Any, Awaitable, Callable, Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -56,6 +57,7 @@ _RAG_PROMPT_TEMPLATE = ChatPromptTemplate.from_messages(
         (
             "human",
             "Use the context blocks below to answer.\n\n"
+            "{language_instruction}\n\n"
             "Context blocks:\n{context}\n\n"
             "User question:\n{query}\n\n"
             "Return a response that follows the structured schema.",
@@ -214,7 +216,9 @@ class RagService:
         if not docs:
             return []
         if not self._reranker:
-            return docs[:limit]
+            ranked = self._rank(docs, query_text=query, limit=limit)
+            positive = [doc for doc in ranked if float(doc.get("score", 0) or 0) > 0]
+            return positive or ranked[:1]
         texts = [(doc.get("text") or "").strip() for doc in docs]
         scores = await asyncio.to_thread(self._reranker.score, query, texts)
         indexed = list(zip(docs, scores, strict=False))
@@ -290,6 +294,7 @@ class RagService:
             history=history_messages,
             context=context,
             query=query,
+            language_instruction="Respond in the same language as the user question.",
         )
 
     def _history_to_messages(
@@ -474,17 +479,32 @@ class RagService:
         citations: list[dict[str, Any]] = []
         for index, doc in enumerate(docs, start=1):
             document_name = doc.get("document_name") or doc.get("file", "unknown")
-            document_url = self._pick_url(doc) or ""
+            page_number = doc.get("page_number")
+            document_url = self._with_page_anchor(self._pick_url(doc) or "", page_number)
             citations.append(
                 {
                     "citation_id": index,
                     "document_id": doc.get("file", "unknown"),
                     "source_filename": document_name,
-                    "page_number": doc.get("page_number"),
+                    "page_number": page_number,
                     "pdf_link_with_page": document_url,
                     "content": (doc.get("text", "") or "")[:_MAX_CITATION_CONTENT_CHARS],
                     "score": doc.get("score"),
                 }
             )
         return citations
+
+    @staticmethod
+    def _with_page_anchor(url: str, page_number: Any) -> str:
+        if not isinstance(url, str) or not url.strip():
+            return ""
+        if not isinstance(page_number, int) or page_number <= 0:
+            return url.strip()
+        parsed = urlsplit(url.strip())
+        fragment_pairs = dict(parse_qsl(parsed.fragment, keep_blank_values=True))
+        fragment_pairs["page"] = str(page_number)
+        updated_fragment = urlencode(fragment_pairs)
+        return urlunsplit(
+            (parsed.scheme, parsed.netloc, parsed.path, parsed.query, updated_fragment)
+        )
 

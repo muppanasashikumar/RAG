@@ -7,8 +7,14 @@ services and repositories.  API controllers depend only on these providers via
 
 from __future__ import annotations
 
+import hmac
 from functools import lru_cache
 
+from fastapi import HTTPException, Security, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jwt.exceptions import InvalidTokenError
+
+from app.core.auth import validate_clerk_bearer_token
 from app.core.config import get_documents_dir, settings
 from app.infrastructure.embeddings import EmbeddingsClient, get_embeddings_client
 from app.infrastructure.llm import LLMClient, get_llm_client
@@ -24,6 +30,43 @@ from app.repositories.vector_repository import VectorRepository
 from app.services.chat_history_service import ChatHistoryService
 from app.services.ingestion_service import IngestionService
 from app.services.rag_service import RagService
+
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def require_authenticated_request(
+    credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+) -> None:
+    expected_token = (settings.API_AUTH_TOKEN or "").strip()
+    clerk_jwks_url = (settings.CLERK_JWKS_URL or "").strip()
+
+    if not expected_token and not clerk_jwks_url:
+        return
+
+    provided_token = credentials.credentials if credentials else ""
+    if not provided_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized request",
+        )
+
+    if clerk_jwks_url:
+        try:
+            validate_clerk_bearer_token(provided_token)
+            return
+        except InvalidTokenError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Unauthorized request",
+            ) from exc
+
+    if expected_token and hmac.compare_digest(provided_token, expected_token):
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Unauthorized request",
+    )
 
 
 @lru_cache(maxsize=1)

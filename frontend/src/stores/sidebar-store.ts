@@ -1,19 +1,12 @@
 import { create } from "zustand";
 
 import type { Chat } from "@/components/rag/chat/types";
+import { authenticatedFetch } from "@/lib/authenticated-fetch";
 
 const RECENT_CHATS_STORAGE_KEY = "rag-recent-chats";
 const RECENTS_PAGE_SIZE = 20;
 const BACKEND_API_URL =
   process.env.NEXT_PUBLIC_BACKEND_API_URL?.trim() || "http://localhost:8000";
-const LEGACY_MOCK_CHAT_IDS = new Set(["policy", "contract", "research", "onboarding"]);
-
-function isLegacyMockChat(chat: Chat): boolean {
-  if (LEGACY_MOCK_CHAT_IDS.has(chat.id) || chat.id.startsWith("recent-")) {
-    return true;
-  }
-  return /^workspace\/docs-\d+\.pdf$/i.test(chat.source);
-}
 
 function normalizeRecentChats(value: unknown): Chat[] {
   if (!Array.isArray(value)) {
@@ -46,7 +39,7 @@ function readStoredRecentChats(): Chat[] {
     if (!raw) {
       return [];
     }
-    return normalizeRecentChats(JSON.parse(raw)).filter((chat) => !isLegacyMockChat(chat));
+    return normalizeRecentChats(JSON.parse(raw));
   } catch {
     return [];
   }
@@ -165,7 +158,7 @@ export const useSidebarStore = create<SidebarState>((set, get) => ({
     }
     set({ isLoadingRecents: true });
     try {
-      const response = await fetch(
+      const response = await authenticatedFetch(
         `${BACKEND_API_URL}/api/v1/rag/chats?limit=${RECENTS_PAGE_SIZE}&offset=${state.recentsOffset}`,
       );
       if (!response.ok) {

@@ -11,8 +11,10 @@ export type Chat = {
 
 export type Message = {
   id: string;
+  serverMessageId?: string;
   role: "assistant" | "user";
   content: string;
+  feedback?: "like" | "dislike" | null;
   citations?: Citation[];
   retrievalMode?: "vector" | "hybrid" | "fallback" | "none";
   reasoningSteps?: ReasoningStep[];
@@ -38,13 +40,16 @@ export type ReasoningStep = {
 };
 
 export type ChatPanelProps = {
+  activeChatId: string;
   messages: Message[];
   prompt: string;
   isReplyStreaming: boolean;
   isIndexingDocuments: boolean;
+  isTtsEnabled: boolean;
   onPromptChange: (value: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onStopStreaming: () => void;
+  onTtsEnabledChange: (enabled: boolean) => void;
 };
 
 export type ChatComposerInputProps = {
@@ -67,6 +72,7 @@ export type ChatVoiceDictationProps = {
   onPromptChange: (value: string) => void;
   isReplyStreaming: boolean;
   onListeningChange?: (listening: boolean) => void;
+  onBargeIn?: () => void;
   children: (context: ChatVoiceDictationRenderContext) => ReactNode;
 };
 
@@ -102,6 +108,8 @@ export type WorkspaceHeaderProps = {
   activeChatTitle: string;
 };
 
-export type ChatWorkspaceLayoutProps = ChatSidebarProps & {
+export type ChatWorkspaceLayoutProps = {
+  isSidebarCollapsed: boolean;
+  activeChatTitle: string;
   children: ReactNode;
 };

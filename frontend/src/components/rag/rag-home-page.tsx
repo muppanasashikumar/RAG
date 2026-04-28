@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { usePathname, useRouter } from "next/navigation";
 
 import type { Chat } from "@/components/rag/chat/types";
-import { ChatPanel, ChatWorkspaceLayout, RightPanel } from "@/components/rag";
+import { ChatPanel, ChatSidebar, ChatWorkspaceLayout, RightPanel } from "@/components/rag";
 import { useAIState } from "@/hooks/use-ai-state";
 import { useChatState } from "@/hooks/use-chat-state";
 import { useSidebarState } from "@/hooks/use-sidebar-state";
+import { setAuthTokenProvider } from "@/lib/authenticated-fetch";
+import { useChatVoiceStore } from "@/stores/chat";
 
 type RagHomePageProps = {
   routeChatId?: string;
@@ -25,6 +28,7 @@ function createPlaceholderChat(chatId: string): Chat {
 }
 
 export function RagHomePage({ routeChatId }: RagHomePageProps) {
+  const { getToken, isLoaded, isSignedIn } = useAuth();
   const syncedRouteChatIdRef = useRef<string | null>(null);
   const router = useRouter();
   const pathname = usePathname();
@@ -34,6 +38,8 @@ export function RagHomePage({ routeChatId }: RagHomePageProps) {
     activeChat,
     setActiveChat,
     recentChats,
+    isHydrated,
+    hydrateRecentChats,
     isSidebarCollapsed,
     toggleSidebar,
     filteredChats,
@@ -60,6 +66,21 @@ export function RagHomePage({ routeChatId }: RagHomePageProps) {
     handleStopStreaming,
     handleNewChat,
   } = useAIState();
+  const { isTtsEnabled, setTtsEnabled } = useChatVoiceStore();
+
+  useEffect(() => {
+    setAuthTokenProvider(() => getToken());
+    return () => {
+      setAuthTokenProvider(null);
+    };
+  }, [getToken]);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || isHydrated) {
+      return;
+    }
+    hydrateRecentChats();
+  }, [hydrateRecentChats, isHydrated, isLoaded, isSignedIn]);
 
   useEffect(() => {
     if (!routeChatId) {
@@ -95,24 +116,31 @@ export function RagHomePage({ routeChatId }: RagHomePageProps) {
   return (
     <ChatWorkspaceLayout
       isSidebarCollapsed={isSidebarCollapsed}
-      query={query}
-      onQueryChange={setQuery}
-      activeChat={activeChat}
-      filteredChats={filteredChats}
-      hasMoreRecents={hasMoreRecents}
-      onLoadMoreRecents={fetchMoreRecentChats}
-      onSelectChat={handleSelectChat}
-      onNewChat={onNewChat}
-      onToggleSidebar={toggleSidebar}
+      activeChatTitle={activeChat.title}
     >
+      <ChatSidebar
+        isSidebarCollapsed={isSidebarCollapsed}
+        query={query}
+        onQueryChange={setQuery}
+        activeChat={activeChat}
+        filteredChats={filteredChats}
+        hasMoreRecents={hasMoreRecents}
+        onLoadMoreRecents={fetchMoreRecentChats}
+        onSelectChat={handleSelectChat}
+        onNewChat={onNewChat}
+        onToggleSidebar={toggleSidebar}
+      />
       <ChatPanel
+        activeChatId={activeChat.id}
         messages={messages}
         prompt={prompt}
         isReplyStreaming={isReplyStreaming}
         isIndexingDocuments={isBatchUploading}
+        isTtsEnabled={isTtsEnabled}
         onPromptChange={setPrompt}
         onSubmit={handleSubmit}
         onStopStreaming={handleStopStreaming}
+        onTtsEnabledChange={setTtsEnabled}
       />
       <RightPanel
         uploadedFiles={uploadedFiles}

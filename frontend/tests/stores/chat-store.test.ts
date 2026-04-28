@@ -1,8 +1,10 @@
 import type { FormEvent } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { starterMessages } from "@/components/rag";
-import { useChatStore } from "@/stores/chat-store";
+import { useChatInputStore } from "@/stores/chat-input-store";
+import { useChatMessagesStore } from "@/stores/chat-messages-store";
+import { useChatStreamingStore } from "@/stores/chat-streaming-store";
+import { useChatUploadStore } from "@/stores/chat-upload-store";
 import { useSidebarStore } from "@/stores/sidebar-store";
 
 let uuidCounter = 0;
@@ -10,225 +12,210 @@ vi.mock("uuid", () => ({
   v4: () => `uuid-${++uuidCounter}`,
 }));
 
-const initialChatState = useChatStore.getState();
+const initialInputState = useChatInputStore.getState();
+const initialMessagesState = useChatMessagesStore.getState();
+const initialUploadState = useChatUploadStore.getState();
 const initialSidebarState = useSidebarStore.getState();
 
 function fakeFormEvent() {
   return { preventDefault: vi.fn() } as unknown as FormEvent<HTMLFormElement>;
 }
 
-function streamedResponse(chunks: string[]): Response {
+function streamedSseResponse(events: string[]): Response {
   const encoder = new TextEncoder();
   const body = new ReadableStream({
     start(controller) {
-      for (const chunk of chunks) {
-        controller.enqueue(encoder.encode(chunk));
+      for (const event of events) {
+        controller.enqueue(encoder.encode(event));
       }
       controller.close();
     },
   });
   return new Response(body, {
     status: 200,
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
+    headers: { "Content-Type": "text/event-stream" },
   });
 }
 
-describe("useChatStore", () => {
+describe("chat split stores", () => {
   beforeEach(() => {
     uuidCounter = 0;
-    useChatStore.setState({ ...initialChatState, messages: [...starterMessages] }, true);
+    useChatInputStore.setState(initialInputState, true);
+    useChatMessagesStore.setState(initialMessagesState, true);
+    useChatUploadStore.setState(initialUploadState, true);
     useSidebarStore.setState(initialSidebarState, true);
+    useChatStreamingStore.getState().disposeAllStreams();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    useChatStreamingStore.getState().disposeAllStreams();
   });
 
-  describe("setters", () => {
-    it("setUploadedFile stores the file and its name", () => {
-      const file = new File(["x"], "policy.pdf", { type: "application/pdf" });
-      useChatStore.getState().setUploadedFile(file);
-      expect(useChatStore.getState().uploadedFile).toBe(file);
-      expect(useChatStore.getState().uploadedFileName).toBe("policy.pdf");
+  it("newChat resets transcript and keeps uploaded source label", () => {
+    useChatUploadStore.setState({ uploadedFileNames: ["deck.pdf"] });
+    useChatMessagesStore.setState({
+      messages: [{ id: "x", role: "assistant", content: "old" }],
     });
 
-    it("setUploadedFile(null) clears the filename", () => {
-      useChatStore.getState().setUploadedFile(null);
-      expect(useChatStore.getState().uploadedFile).toBeNull();
-      expect(useChatStore.getState().uploadedFileName).toBe("");
-    });
+    useChatMessagesStore.getState().newChat();
 
-    it("setPrompt stores the prompt text", () => {
-      useChatStore.getState().setPrompt("hello");
-      expect(useChatStore.getState().prompt).toBe("hello");
+    expect(useChatMessagesStore.getState().messages).toEqual([]);
+    expect(useSidebarStore.getState().activeChat).toMatchObject({
+      id: "new",
+      title: "Untitled document chat",
+      source: "deck.pdf",
     });
   });
 
-  describe("newChat", () => {
-    it("resets the sidebar active chat and clears the transcript to a greeting", () => {
-      useChatStore.setState({ uploadedFileName: "deck.pdf" });
-      useChatStore.getState().newChat();
+  it("submitPrompt no-ops when prompt is blank", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    useChatInputStore.setState({ prompt: "   " });
 
-      const active = useSidebarStore.getState().activeChat;
-      expect(active.id).toBe("new");
-      expect(active.title).toBe("Untitled document chat");
-      expect(active.source).toBe("deck.pdf");
+    await useChatMessagesStore.getState().submitPrompt(fakeFormEvent());
 
-      const messages = useChatStore.getState().messages;
-      expect(messages).toHaveLength(1);
-      expect(messages[0]).toEqual(starterMessages[0]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(useChatMessagesStore.getState().messages).toEqual([]);
+  });
+
+  it("submitPrompt streams assistant response and metadata", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      streamedSseResponse([
+        'data: {"type":"token","content":"Hello "}\n\n',
+        'data: {"type":"token","content":"world"}\n\n',
+        'data: {"type":"citations","retrieval_mode":"hybrid","citations":[{"citation_id":1,"document_id":"doc-1","source_filename":"doc.pdf","page_number":2,"pdf_link_with_page":"/files/doc.pdf#page=2","content":"hello","score":0.95}]}\n\n',
+        "data: [DONE]\n\n",
+      ]),
+    );
+
+    useChatInputStore.setState({ prompt: "What does it say?" });
+    useChatUploadStore.setState({
+      uploadedFileNames: ["doc.pdf"],
+      uploadedFiles: [new File(["x"], "doc.pdf", { type: "application/pdf" })],
     });
 
-    it("falls back to a helpful source label when no document is uploaded", () => {
-      useChatStore.setState({ uploadedFileName: "" });
-      useChatStore.getState().newChat();
-      expect(useSidebarStore.getState().activeChat.source).toBe(
-        "No document uploaded",
-      );
+    await useChatMessagesStore.getState().submitPrompt(fakeFormEvent());
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [url, init] = fetchSpy.mock.calls[0];
+    expect(String(url)).toContain("/api/v1/chat/stream");
+    expect((init as RequestInit).method).toBe("POST");
+    const body = (init as RequestInit).body as FormData;
+    expect(body.get("response_language")).toBe("auto");
+    expect(useChatInputStore.getState().prompt).toBe("");
+
+    const [userMessage, assistantMessage] = useChatMessagesStore.getState().messages;
+    expect(userMessage).toMatchObject({ role: "user", content: "What does it say?" });
+    expect(assistantMessage).toMatchObject({
+      role: "assistant",
+      content: "Hello world",
+      isStreaming: false,
+      retrievalMode: "hybrid",
+    });
+    expect(assistantMessage.citations).toHaveLength(1);
+    expect(assistantMessage.citations?.[0]).toMatchObject({
+      sourceFilename: "doc.pdf",
+      pageNumber: 2,
     });
   });
 
-  describe("submitPrompt", () => {
-    it("is a no-op when the prompt is empty / whitespace", async () => {
-      const fetchSpy = vi.spyOn(globalThis, "fetch");
-      useChatStore.setState({ prompt: "   " });
+  it("normalizes citation filename and page number from stream payload", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      streamedSseResponse([
+        'data: {"type":"token","content":"Answer"}\n\n',
+        'data: {"type":"citations","retrieval_mode":"hybrid","citations":[{"citation_id":1,"document_id":"uploads/documents/transformer_notes.pdf","source_filename":"89af3ce8c57f3ef6d1234a56","page_number":"3","pdf_link_with_page":"/files/transformer_notes.pdf#page=3","content":"excerpt","score":0.71}]}\n\n',
+        "data: [DONE]\n\n",
+      ]),
+    );
 
-      await useChatStore.getState().submitPrompt(fakeFormEvent());
+    useChatInputStore.setState({ prompt: "Explain transformer" });
+    await useChatMessagesStore.getState().submitPrompt(fakeFormEvent());
 
-      expect(fetchSpy).not.toHaveBeenCalled();
-      expect(useChatStore.getState().messages).toEqual(starterMessages);
+    const assistantMessage = useChatMessagesStore
+      .getState()
+      .messages.find((message) => message.role === "assistant");
+    expect(assistantMessage?.citations?.[0]).toMatchObject({
+      sourceFilename: "transformer_notes.pdf",
+      pageNumber: 3,
+      pdfLinkWithPage: expect.stringContaining("#page=3"),
     });
+  });
 
-    it("is a no-op when a reply is already streaming", async () => {
-      const fetchSpy = vi.spyOn(globalThis, "fetch");
-      useChatStore.setState({
-        prompt: "hello",
-        messages: [
-          ...starterMessages,
-          {
-            id: "inflight",
-            role: "assistant",
-            content: "",
-            isStreaming: true,
-          },
-        ],
-      });
+  it("stopStreamingForChat appends stopped marker", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_, init) =>
+        new Promise((_, reject) => {
+          (init as RequestInit).signal?.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    );
 
-      await useChatStore.getState().submitPrompt(fakeFormEvent());
-      expect(fetchSpy).not.toHaveBeenCalled();
-    });
+    useChatInputStore.setState({ prompt: "long question" });
+    const pending = useChatMessagesStore.getState().submitPrompt(fakeFormEvent());
+    const activeChatId = useSidebarStore.getState().activeChat.id;
 
-    it("streams tokens, clears the prompt, and attaches a citation", async () => {
-      const fetchSpy = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue(streamedResponse(["Hello ", "world"]));
+    useChatStreamingStore
+      .getState()
+      .stopStreamingForChat(activeChatId, useChatMessagesStore.setState);
 
-      useChatStore.setState({
-        prompt: "What does it say?",
-        uploadedFileName: "doc.pdf",
-      });
+    await pending;
 
-      await useChatStore.getState().submitPrompt(fakeFormEvent());
+    const assistant = useChatMessagesStore
+      .getState()
+      .messages.find((message) => message.role === "assistant");
+    expect(assistant?.isStreaming).toBe(false);
+    expect(assistant?.content).toContain("Stopped");
+  });
 
-      expect(fetchSpy).toHaveBeenCalledOnce();
-      const [url, init] = fetchSpy.mock.calls[0];
-      expect(url).toBe("/api/chat");
-      const request = init as RequestInit;
-      expect(request.method).toBe("POST");
-      expect(JSON.parse(request.body as string)).toEqual({
-        prompt: "What does it say?",
-        uploadedFileName: "doc.pdf",
-      });
+  it("allows parallel streams across different chats", async () => {
+    let firstRequestUnblock: (() => void) | null = null;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((url, init) => {
+      const body = (init as RequestInit).body as FormData;
+      const chatId = String(body.get("chat_id"));
 
-      const { messages, prompt } = useChatStore.getState();
-      expect(prompt).toBe("");
-      const [user, assistant] = messages.slice(-2);
-      expect(user).toEqual({
-        id: "uuid-1",
-        role: "user",
-        content: "What does it say?",
-      });
-      expect(assistant.role).toBe("assistant");
-      expect(assistant.isStreaming).toBe(false);
-      expect(assistant.content).toBe("Hello world");
-      expect(assistant.citations).toEqual(["doc.pdf"]);
-    });
-
-    it("shows a friendly message when the response is not ok", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
-        new Response("boom", { status: 500 }),
-      );
-      useChatStore.setState({ prompt: "ask" });
-
-      await useChatStore.getState().submitPrompt(fakeFormEvent());
-
-      const assistant = useChatStore.getState().messages.at(-1)!;
-      expect(assistant.isStreaming).toBe(false);
-      expect(assistant.content).toBe("boom");
-    });
-
-    it("returns a '(Stopped.)' marker when the stream is aborted mid-flight", async () => {
-      vi.spyOn(globalThis, "fetch").mockImplementation(
-        (_, init) =>
-          new Promise((_, reject) => {
-            (init as RequestInit).signal?.addEventListener("abort", () => {
-              reject(
-                new DOMException("The user aborted a request.", "AbortError"),
-              );
-            });
-          }),
-      );
-
-      useChatStore.setState({ prompt: "long question" });
-      const pending = useChatStore.getState().submitPrompt(fakeFormEvent());
-      useChatStore.getState().stopStreaming();
-      await pending;
-
-      const assistant = useChatStore.getState().messages.at(-1)!;
-      expect(assistant.isStreaming).toBe(false);
-      expect(assistant.content).toContain("Stopped");
-    });
-
-    it("starting a new chat aborts any in-flight request", async () => {
-      let capturedSignal: AbortSignal | null = null;
-      vi.spyOn(globalThis, "fetch").mockImplementation(
-        (_, init) =>
-          new Promise<Response>((_, reject) => {
-            capturedSignal = (init as RequestInit).signal ?? null;
-            capturedSignal?.addEventListener("abort", () =>
-              reject(new DOMException("aborted", "AbortError")),
+      if (chatId === "chat-first") {
+        return new Promise<Response>((resolve) => {
+          firstRequestUnblock = () => {
+            resolve(
+              streamedSseResponse([
+                'data: {"type":"token","content":"First done"}\n\n',
+                "data: [DONE]\n\n",
+              ]),
             );
-          }),
+          };
+        });
+      }
+
+      return Promise.resolve(
+        streamedSseResponse([
+          'data: {"type":"token","content":"Second done"}\n\n',
+          "data: [DONE]\n\n",
+        ]),
       );
-
-      useChatStore.setState({ prompt: "first" });
-      const pending = useChatStore.getState().submitPrompt(fakeFormEvent());
-      useChatStore.getState().newChat();
-      await pending;
-
-      expect(capturedSignal?.aborted).toBe(true);
     });
-  });
 
-  describe("dispose", () => {
-    it("aborts any in-flight request and clears the controller", async () => {
-      let capturedSignal: AbortSignal | null = null;
-      vi.spyOn(globalThis, "fetch").mockImplementation(
-        (_, init) =>
-          new Promise<Response>((_, reject) => {
-            capturedSignal = (init as RequestInit).signal ?? null;
-            capturedSignal?.addEventListener("abort", () =>
-              reject(new DOMException("aborted", "AbortError")),
-            );
-          }),
-      );
-
-      useChatStore.setState({ prompt: "hi" });
-      const pending = useChatStore.getState().submitPrompt(fakeFormEvent());
-      useChatStore.getState().dispose();
-      await pending;
-
-      expect(capturedSignal?.aborted).toBe(true);
+    useSidebarStore.setState({
+      activeChat: { ...useSidebarStore.getState().activeChat, id: "chat-first" },
     });
+    useChatInputStore.setState({ prompt: "first user" });
+    const firstSubmit = useChatMessagesStore.getState().submitPrompt(fakeFormEvent());
+
+    useSidebarStore.setState({
+      activeChat: { ...useSidebarStore.getState().activeChat, id: "chat-second" },
+    });
+    useChatMessagesStore.setState({ messages: [] });
+    useChatInputStore.setState({ prompt: "second user" });
+    await useChatMessagesStore.getState().submitPrompt(fakeFormEvent());
+
+    firstRequestUnblock?.();
+    await firstSubmit;
+
+    const firstChatController = useChatStreamingStore.getState().hasActiveController("chat-first");
+    const secondChatController = useChatStreamingStore.getState().hasActiveController("chat-second");
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(firstChatController).toBe(false);
+    expect(secondChatController).toBe(false);
   });
 });
