@@ -20,7 +20,10 @@ FROM python:3.11-slim AS runner
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/app/.venv/bin:$PATH"
+    PATH="/app/.venv/bin:$PATH" \
+    HF_HOME=/app/.cache/huggingface \
+    TRANSFORMERS_CACHE=/app/.cache/huggingface \
+    SENTENCE_TRANSFORMERS_HOME=/app/.cache/huggingface/sentence-transformers
 
 # System libraries required at runtime by unstructured / cv2 / pdfminer / pdf2image.
 # - libgl1, libglib2.0-0, libxcb1, libxext6, libsm6, libxrender1: needed by opencv (cv2).
@@ -42,6 +45,12 @@ WORKDIR /app
 
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/app /app/app
+
+# Pre-download the embedding model into the image so the first request does not
+# pay download latency (which often exceeds platform proxy timeouts and surfaces
+# as "Connection lost before receiving a response").
+ARG EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+RUN /app/.venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDING_MODEL}')"
 
 EXPOSE 8000
 

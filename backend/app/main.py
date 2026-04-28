@@ -8,6 +8,7 @@ Responsibilities (only):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -20,7 +21,9 @@ from app.core.config import settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.rate_limit import RateLimitMiddleware
+from app.infrastructure.embeddings import get_embeddings_client
 from app.infrastructure.mongo import initialize_collections
+from app.infrastructure.reranker import get_reranker_client
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,24 @@ async def lifespan(_: FastAPI):
     except Exception:
         # Keep the app bootable even if external services are temporarily unavailable.
         logger.exception("Startup collection initialization failed; continuing startup.")
+
+    # Pre-warm heavy ML components so the first user request does not pay the
+    # cost of model download + load. Lazy initialization frequently exceeds
+    # platform proxy timeouts (e.g. Railway / Render) and surfaces to users as
+    # "Connection lost before receiving a response".
+    try:
+        await asyncio.to_thread(get_embeddings_client)
+        logger.info("Embeddings model pre-warmed")
+    except Exception:
+        logger.exception("Failed to pre-warm embeddings model; continuing startup.")
+
+    if settings.RERANKER_ENABLED:
+        try:
+            await asyncio.to_thread(get_reranker_client)
+            logger.info("Reranker model pre-warmed")
+        except Exception:
+            logger.exception("Failed to pre-warm reranker model; continuing startup.")
+
     logger.info("RAG Backend started")
     yield
     logger.info("RAG Backend shutting down")
