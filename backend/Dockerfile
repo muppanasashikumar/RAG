@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --no-dev --no-cache
+RUN /app/.venv/bin/python -c "import sentence_transformers; print(sentence_transformers.__version__)"
 
 COPY app ./app
 
