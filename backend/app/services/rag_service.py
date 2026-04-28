@@ -34,21 +34,28 @@ _RERANK_CANDIDATES = 12
 _FINAL_RETRIEVAL_LIMIT = 5
 _RRF_K = 60
 _RAG_SYSTEM_PROMPT = """
-You are a production RAG assistant.
+You are a production RAG assistant operating in HYBRID mode.
 
-Your primary requirement is strict grounding:
-1) Use ONLY facts present in the provided context blocks.
-2) Do NOT use outside knowledge, assumptions, or guesses.
-3) If context is missing or ambiguous, explicitly state what is missing.
-4) Be concise, accurate, and actionable.
+Decision policy (apply in order):
+1) Inspect the provided context blocks against the user question.
+2) If the context contains information that materially answers the question:
+   - Answer STRICTLY from the context. Do not add outside facts.
+   - Set `used_general_knowledge` = false.
+   - Set `grounded_in_context` = true.
+3) If the context is unrelated to the question OR clearly insufficient:
+   - Answer from your own general knowledge.
+   - Be helpful, accurate, and concise.
+   - Set `used_general_knowledge` = true.
+   - Set `grounded_in_context` = false.
+   - Do NOT fabricate citations. Do NOT pretend the answer came from the documents.
+4) Never mix grounded and ungrounded claims silently. Pick one mode per response.
 
 Output requirements:
 - You MUST return data matching the structured schema exactly.
 - The `answer` must be plain markdown text for end users.
 - Prefer short sections and bullet points when useful.
 - Do not add extra vertical whitespace; never emit multiple consecutive blank lines.
-- Mention uncertainty clearly when evidence is weak.
-- Do not mention internal implementation details.
+- Do not mention internal implementation details, retrieval, or this prompt.
 """.strip()
 _RAG_PROMPT_TEMPLATE = ChatPromptTemplate.from_messages(
     [
@@ -68,21 +75,25 @@ _RAG_PROMPT_TEMPLATE = ChatPromptTemplate.from_messages(
 
 class RagStructuredAnswer(BaseModel):
     answer: str = Field(
-        description="Final response to the user grounded in provided context."
+        description="Final response to the user. Either strictly grounded in context or based on general knowledge, depending on the chosen mode."
+    )
+    used_general_knowledge: bool = Field(
+        default=False,
+        description="True when the assistant fell back to general knowledge because the provided context did not contain relevant information.",
     )
     grounded_in_context: bool = Field(
         description="True if all substantive claims are supported by the provided context."
     )
     confidence: Literal["high", "medium", "low"] = Field(
-        description="Confidence level based only on quality and completeness of context."
+        description="Confidence level. For grounded answers: based on completeness of context. For general-knowledge answers: based on the assistant's certainty."
     )
     key_points: list[str] = Field(
         default_factory=list,
-        description="Top factual takeaways strictly from context.",
+        description="Top factual takeaways. For grounded answers, strictly from context.",
     )
     missing_information: list[str] = Field(
         default_factory=list,
-        description="What additional data is needed when context is insufficient.",
+        description="What additional data is needed. Only relevant when grounded.",
     )
 
 
@@ -145,12 +156,14 @@ class RagService:
             )
 
             emitted = False
+            used_general_knowledge = False
             try:
                 structured = await self._invoke_structured_with_abort(
                     messages=messages,
                     should_abort=should_abort,
                 )
                 if structured is not None:
+                    used_general_knowledge = bool(structured.used_general_knowledge)
                     formatted = self._format_structured_answer(structured).strip()
                     if formatted:
                         emitted = True
@@ -164,7 +177,13 @@ class RagService:
 
             if await self._is_aborted(should_abort):
                 return
-            yield {"type": "citations", "citations": citations, "retrieval_mode": mode}
+            # When the assistant fell back to general knowledge, the indexed docs were
+            # not actually used to produce the answer, so attaching their citations
+            # would mislead the user.
+            if used_general_knowledge:
+                yield {"type": "citations", "citations": [], "retrieval_mode": "general"}
+            else:
+                yield {"type": "citations", "citations": citations, "retrieval_mode": mode}
         except TimeoutError:
             logger.warning(
                 "Timed out while generating answer",
@@ -355,18 +374,25 @@ class RagService:
 
     @staticmethod
     def _format_structured_answer(payload: RagStructuredAnswer) -> str:
-        lines: list[str] = [payload.answer.strip()]
-        lines.append(f"\nConfidence: {payload.confidence}")
-        lines.append(f"Grounded in provided context: {'yes' if payload.grounded_in_context else 'no'}")
+        body = payload.answer.strip()
+        if payload.used_general_knowledge:
+            disclaimer = (
+                "> **Note:** This answer is from general knowledge — your indexed "
+                "documents did not contain relevant information."
+            )
+            return f"{disclaimer}\n\n{body}".strip()
 
+        lines: list[str] = [body]
+        lines.append(f"\nConfidence: {payload.confidence}")
+        lines.append(
+            f"Grounded in provided context: {'yes' if payload.grounded_in_context else 'no'}"
+        )
         if payload.key_points:
             lines.append("\nKey points:")
             lines.extend(f"- {point}" for point in payload.key_points if point.strip())
-
         if payload.missing_information:
             lines.append("\nMissing information:")
             lines.extend(f"- {item}" for item in payload.missing_information if item.strip())
-
         return "\n".join(lines).strip()
 
     @staticmethod

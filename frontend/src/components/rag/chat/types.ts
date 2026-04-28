@@ -16,7 +16,7 @@ export type Message = {
   content: string;
   feedback?: "like" | "dislike" | null;
   citations?: Citation[];
-  retrievalMode?: "vector" | "hybrid" | "fallback" | "none";
+  retrievalMode?: "vector" | "hybrid" | "fallback" | "general" | "none";
   reasoningSteps?: ReasoningStep[];
   /** Assistant message is still receiving streamed tokens */
   isStreaming?: boolean;

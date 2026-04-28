@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-RetrievalMode = Literal["vector", "hybrid", "fallback", "none"]
+RetrievalMode = Literal["vector", "hybrid", "fallback", "general", "none"]
 
 
 @dataclass(slots=True)

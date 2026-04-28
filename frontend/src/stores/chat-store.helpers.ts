@@ -58,7 +58,11 @@ export function appendStoppedSuffix(content: string): string {
 }
 
 export function normalizeRetrievalMode(value: unknown): Message["retrievalMode"] | undefined {
-  return value === "vector" || value === "hybrid" || value === "fallback" || value === "none"
+  return value === "vector" ||
+    value === "hybrid" ||
+    value === "fallback" ||
+    value === "general" ||
+    value === "none"
     ? value
     : undefined;
 }
