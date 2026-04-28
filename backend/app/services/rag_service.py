@@ -127,22 +127,13 @@ class RagService:
         try:
             if await self._is_aborted(should_abort):
                 return
+            # Retrieval spans the full vector store. The uploaded file (if any) is kept
+            # only for logging/citation context; it does not restrict the search scope.
             docs, mode = await asyncio.wait_for(
-                self._retrieve(query=normalized_query, file=file),
+                self._retrieve(query=normalized_query),
                 timeout=_RETRIEVAL_TIMEOUT_SECONDS,
             )
             if await self._is_aborted(should_abort):
-                return
-
-            if file and not docs:
-                yield {
-                    "type": "token",
-                    "content": (
-                        f"I couldn't find indexed content for '{file}'. "
-                        "Please re-upload the document and wait for indexing to finish."
-                    ),
-                }
-                yield {"type": "citations", "citations": [], "retrieval_mode": mode}
                 return
 
             context = self._build_context(docs)
@@ -175,7 +166,10 @@ class RagService:
                 return
             yield {"type": "citations", "citations": citations, "retrieval_mode": mode}
         except TimeoutError:
-            logger.warning("Timed out while generating answer", extra={"file": file})
+            logger.warning(
+                "Timed out while generating answer",
+                extra={"attached_file": file},
+            )
             yield {
                 "type": "error",
                 "message": "Request timed out while generating an answer. Please try again.",
@@ -190,16 +184,12 @@ class RagService:
             yield {"type": "citations", "citations": [], "retrieval_mode": "none"}
 
     async def _retrieve(
-        self, *, query: str, file: str | None
+        self, *, query: str
     ) -> tuple[list[dict[str, Any]], RetrievalMode]:
         embedding = await asyncio.to_thread(self._embeddings.embed, query)
         candidate_limit = _RERANK_CANDIDATES if self._reranker else _FINAL_RETRIEVAL_LIMIT
-        vector_task = self._vectors.vector_search(
-            embedding, file=file, limit=candidate_limit
-        )
-        keyword_task = self._vectors.keyword_search(
-            query, file=file, limit=candidate_limit
-        )
+        vector_task = self._vectors.vector_search(embedding, limit=candidate_limit)
+        keyword_task = self._vectors.keyword_search(query, limit=candidate_limit)
         vector_docs, keyword_docs = await asyncio.gather(vector_task, keyword_task)
 
         merged = self._fuse_rankings(vector_docs=vector_docs, keyword_docs=keyword_docs)
