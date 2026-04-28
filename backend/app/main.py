@@ -35,7 +35,11 @@ def _get_allowed_origins() -> list[str]:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     configure_logging()
-    await initialize_collections()
+    try:
+        await initialize_collections()
+    except Exception:
+        # Keep the app bootable even if external services are temporarily unavailable.
+        logger.exception("Startup collection initialization failed; continuing startup.")
     logger.info("RAG Backend started")
     yield
     logger.info("RAG Backend shutting down")
