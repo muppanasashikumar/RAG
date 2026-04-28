@@ -7,6 +7,7 @@ from typing import Any
 
 from beanie import PydanticObjectId
 from app.infrastructure.mongo_models import ChatHistory, ChatMessage
+from app.infrastructure.mongo import get_mongo_provider
 
 
 class ChatHistoryRepository:
@@ -21,6 +22,7 @@ class ChatHistoryRepository:
         citations: list[dict[str, Any]],
         retrieval_mode: str | None,
     ) -> str | None:
+        await get_mongo_provider()
         now = datetime.now(UTC)
         user_message = ChatMessage(
             chat_id=chat_id,
@@ -56,6 +58,7 @@ class ChatHistoryRepository:
         return str(assistant_message.id) if assistant_message.id is not None else None
 
     async def list_chats(self, *, limit: int, offset: int) -> list[dict[str, Any]]:
+        await get_mongo_provider()
         cursor = (
             ChatHistory.find_all()
             .sort("-updated_at")
@@ -78,6 +81,7 @@ class ChatHistoryRepository:
         return chats
 
     async def get_messages(self, chat_id: str) -> list[dict[str, Any]]:
+        await get_mongo_provider()
         if not chat_id:
             return []
         payload: list[dict[str, Any]] = []
@@ -108,6 +112,7 @@ class ChatHistoryRepository:
         message_id: str,
         feedback: str | None,
     ) -> bool:
+        await get_mongo_provider()
         try:
             object_id = PydanticObjectId(message_id)
         except Exception:
@@ -126,6 +131,7 @@ class ChatHistoryRepository:
         message_id: str,
         action: str,
     ) -> bool:
+        await get_mongo_provider()
         try:
             object_id = PydanticObjectId(message_id)
         except Exception:
