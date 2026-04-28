@@ -23,10 +23,12 @@ from app.infrastructure.mongo import initialize_collections
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+
+def _get_allowed_origins() -> list[str]:
+    configured = settings.CORS_ALLOWED_ORIGINS.strip()
+    if not configured:
+        return []
+    return [origin.strip() for origin in configured.split(",") if origin.strip()]
 
 
 @asynccontextmanager
@@ -40,10 +42,11 @@ async def lifespan(_: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="RAG Backend", lifespan=lifespan)
+    allowed_origins = _get_allowed_origins()
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=ALLOWED_ORIGINS,
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

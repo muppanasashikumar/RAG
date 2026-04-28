@@ -36,6 +36,8 @@ services:
         value: BAAI/bge-reranker-base
       - key: LLM_MODEL
         value: openai/gpt-oss-20b
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
       - key: RATE_LIMIT_ENABLED
         value: "true"
       - key: RATE_LIMIT_MAX_REQUESTS

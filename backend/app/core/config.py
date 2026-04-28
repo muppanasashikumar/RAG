@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     CLERK_JWKS_URL: str | None = None
     CLERK_ISSUER: str | None = None
     CLERK_AUDIENCE: str | None = None
+    CORS_ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_MAX_REQUESTS: int = 120
     RATE_LIMIT_WINDOW_SECONDS: int = 60
