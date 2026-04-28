@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from sentence_transformers import CrossEncoder
+import logging
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class RerankerClient:
     def __init__(self, model_name: str) -> None:
+        from sentence_transformers import CrossEncoder
+
         self._model = CrossEncoder(model_name)
 
     def score(self, query: str, texts: list[str]) -> list[float]:
@@ -27,5 +31,9 @@ def get_reranker_client() -> RerankerClient | None:
         return None
     global _instance
     if _instance is None:
-        _instance = RerankerClient(settings.RERANKER_MODEL)
+        try:
+            _instance = RerankerClient(settings.RERANKER_MODEL)
+        except Exception:
+            logger.exception("Failed to initialize reranker; continuing without reranker.")
+            return None
     return _instance
