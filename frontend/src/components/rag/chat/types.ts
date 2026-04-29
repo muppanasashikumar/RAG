@@ -101,6 +101,7 @@ export type RightPanelProps = {
 export type UploadStatusItem = {
   fileName: string;
   status: "queued" | "ingesting" | "indexed" | "failed";
+  detail?: string;
   error?: string;
 };
 

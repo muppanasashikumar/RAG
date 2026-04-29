@@ -34,6 +34,7 @@ export type StreamEventPayload = {
   retrieval_mode?: unknown;
   assistant_message_id?: string;
   chat_id?: string;
+  title?: unknown;
 };
 
 export type StoreSetter<TState> = (

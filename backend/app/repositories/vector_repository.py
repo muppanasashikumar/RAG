@@ -14,6 +14,9 @@ _PROJECT_FIELDS: dict[str, int] = {
     "_id": 0,
     "file": 1,
     "text": 1,
+    "document_type": 1,
+    "content_hash_sha256": 1,
+    "file_size_bytes": 1,
     "chunk_level": 1,
     "chunk_id": 1,
     "parent_id": 1,
@@ -27,6 +30,33 @@ _PROJECT_FIELDS: dict[str, int] = {
     "document_name": 1,
 }
 
+# Common English words that would otherwise cause keyword search to match
+# almost every chunk in the corpus (e.g. "tell me about X" pulls everything
+# containing "tell" or "about"). Keep this list small and focused on terms
+# that frequently appear in user questions but never carry retrieval signal.
+QUERY_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "the", "and", "for", "are", "but", "not", "you", "your", "from",
+        "this", "that", "these", "those", "with", "what", "which", "who",
+        "whom", "where", "when", "why", "how", "have", "has", "had", "was",
+        "were", "been", "being", "can", "could", "would", "should", "will",
+        "shall", "may", "might", "must", "does", "did", "doing", "tell",
+        "told", "ask", "asks", "asked", "about", "into", "onto", "over",
+        "under", "than", "then", "such", "some", "any", "all", "each",
+        "every", "very", "just", "also", "only", "own", "other", "our",
+        "ours", "their", "theirs", "his", "her", "hers", "him", "she",
+        "they", "them", "its", "itself", "themselves", "yourself",
+        "yourselves", "myself", "ourselves", "himself", "herself",
+        "let", "lets", "give", "gives", "gave", "show", "shows", "showed",
+        "describe", "describes", "explain", "explains", "explained",
+        "summarize", "summary", "please", "thanks", "thank", "kindly",
+        "want", "wanted", "need", "needs", "needed", "like", "likes",
+        "make", "makes", "made", "get", "gets", "got", "say", "says",
+        "said", "more", "most", "less", "least", "very", "really",
+        "actually", "definitely", "maybe", "perhaps", "possibly",
+    }
+)
+
 
 class VectorRepository:
     @staticmethod
@@ -34,7 +64,7 @@ class VectorRepository:
         return {
             token
             for token in re.findall(r"[A-Za-z0-9_]+", (text or "").lower())
-            if len(token) > 2
+            if len(token) > 2 and token not in QUERY_STOPWORDS
         }
 
     @staticmethod

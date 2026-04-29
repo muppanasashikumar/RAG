@@ -16,6 +16,9 @@ class StoredDocument(Document):
     file: str
     document_name: str
     document_url: str
+    content_hash_sha256: str | None = None
+    document_type: str | None = None
+    file_size_bytes: int | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -29,6 +32,9 @@ class StoredDocument(Document):
 class VectorChunk(Document):
     file: str
     text: str
+    document_type: str | None = None
+    content_hash_sha256: str | None = None
+    file_size_bytes: int | None = None
     chunk_level: str | None = None
     chunk_id: str | None = None
     parent_id: str | None = None

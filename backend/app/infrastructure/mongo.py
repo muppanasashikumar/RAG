@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from beanie import init_beanie
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
@@ -39,16 +41,18 @@ class MongoProvider:
         self._initialized = True
 
 
-_provider: MongoProvider | None = None
+_providers_by_loop: dict[int, MongoProvider] = {}
 
 
 async def get_mongo_provider() -> MongoProvider:
-    global _provider
-    if _provider is None:
-        _provider = MongoProvider(settings.MONGO_URI, settings.MONGO_DB_NAME)
-    await _provider.ping()
-    await _provider.initialize()
-    return _provider
+    loop_id = id(asyncio.get_running_loop())
+    provider = _providers_by_loop.get(loop_id)
+    if provider is None:
+        provider = MongoProvider(settings.MONGO_URI, settings.MONGO_DB_NAME)
+        _providers_by_loop[loop_id] = provider
+    await provider.ping()
+    await provider.initialize()
+    return provider
 
 
 async def initialize_collections() -> None:

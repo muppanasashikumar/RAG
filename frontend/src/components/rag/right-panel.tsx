@@ -1,16 +1,16 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useDropzone, type FileRejection } from "react-dropzone";
 import type { RightPanelProps } from "@/components/rag/chat/types";
 import { FileText, UploadCloud, X } from "lucide-react";
 
-const MAX_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const ACCEPTED_EXTENSIONS = new Set([".pdf", ".doc", ".docx", ".txt", ".csv"]);
 
 function formatMaxSize(): string {
-  return "50 MB";
+  return "20 MB";
 }
 
 function getExtension(filename: string): string {
@@ -51,8 +51,29 @@ export function RightPanel({
   onClearUploadedFiles,
 }: RightPanelProps) {
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [toastError, setToastError] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
   const hasFiles = uploadedFiles.length > 0 || uploadedFileNames.length > 0;
   const selectedSummary = uploadedFileNames.length > 0 ? uploadedFileNames.join(", ") : "No documents selected";
+
+  const showToastError = useCallback((message: string) => {
+    setToastError(message);
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastError(null);
+      toastTimerRef.current = null;
+    }, 3500);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
 
   function clearUploadedFiles() {
     setUploadError(null);
@@ -77,10 +98,10 @@ export function RightPanel({
           error instanceof Error
             ? error.message
             : "Upload failed. Ensure backend ingestion service is reachable.";
-        setUploadError(fallback);
+        showToastError(fallback);
       }
     },
-    [onUploadedFilesChange],
+    [onUploadedFilesChange, showToastError],
   );
 
   const handleDropAccepted = useCallback(
@@ -90,10 +111,10 @@ export function RightPanel({
           error instanceof Error
             ? error.message
             : "Upload failed. Ensure backend ingestion service is reachable.";
-        setUploadError(fallback);
+        showToastError(fallback);
       });
     },
-    [applyFiles],
+    [applyFiles, showToastError],
   );
 
   const handleDropRejected = useCallback((rejections: FileRejection[]) => {
@@ -126,7 +147,15 @@ export function RightPanel({
   const errorId = "rag-document-upload-error";
 
   return (
-    <aside className="space-y-5">
+    <aside className="relative space-y-5">
+      {toastError ? (
+        <div
+          role="alert"
+          className="pointer-events-none absolute right-0 top-0 z-20 max-w-sm rounded-md border border-destructive/40 bg-background px-3 py-2 text-sm text-destructive shadow-md"
+        >
+          {toastError}
+        </div>
+      ) : null}
       <div className="rounded-lg border bg-background p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -217,7 +246,7 @@ export function RightPanel({
                   entry.status === "queued"
                     ? "Queued"
                     : entry.status === "ingesting"
-                      ? "Ingesting"
+                      ? entry.detail?.trim() || "Ingesting"
                       : entry.status === "indexed"
                         ? "Indexed"
                         : "Failed";
@@ -233,6 +262,9 @@ export function RightPanel({
                       <p className="truncate text-xs font-medium">{entry.fileName}</p>
                       <span className={`text-xs font-medium ${statusClass}`}>{statusLabel}</span>
                     </div>
+                    {entry.detail && !entry.error ? (
+                      <p className="mt-1 text-xs text-muted-foreground">{entry.detail}</p>
+                    ) : null}
                     {entry.error ? (
                       <p className="mt-1 text-xs text-destructive">{entry.error}</p>
                     ) : null}

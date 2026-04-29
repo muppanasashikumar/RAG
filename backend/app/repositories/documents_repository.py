@@ -41,12 +41,18 @@ class DocumentsRepository:
         file: str,
         document_name: str,
         document_url: str,
+        content_hash_sha256: str | None = None,
+        document_type: str | None = None,
+        file_size_bytes: int | None = None,
     ) -> None:
         now = datetime.now(UTC)
         existing = await StoredDocument.find_one({"file": file})
         if existing:
             existing.document_name = document_name
             existing.document_url = document_url
+            existing.content_hash_sha256 = content_hash_sha256
+            existing.document_type = document_type
+            existing.file_size_bytes = file_size_bytes
             existing.updated_at = now
             await existing.save()
             return
@@ -54,6 +60,9 @@ class DocumentsRepository:
             file=file,
             document_name=document_name,
             document_url=document_url,
+            content_hash_sha256=content_hash_sha256,
+            document_type=document_type,
+            file_size_bytes=file_size_bytes,
             created_at=now,
             updated_at=now,
         ).insert()

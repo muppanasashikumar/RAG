@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 from collections.abc import AsyncIterator
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from typing import Any, Awaitable, Callable, Literal
@@ -18,37 +19,46 @@ from app.infrastructure.embeddings import EmbeddingsClient
 from app.infrastructure.llm import LLMClient
 from app.infrastructure.reranker import RerankerClient
 from app.repositories.documents_repository import DocumentsRepository
-from app.repositories.vector_repository import VectorRepository
+from app.repositories.vector_repository import QUERY_STOPWORDS, VectorRepository
 
 logger = logging.getLogger(__name__)
 
 _URL_CANDIDATE_KEYS = ("document_url", "documentUrl", "file_url", "fileUrl", "url")
 _MAX_QUERY_CHARS = 2_000
-_MAX_CONTEXT_CHARS = 12_000
-_MAX_HISTORY_CHARS = 4_000
+_MAX_CONTEXT_TOKENS = 3_000
+_MAX_HISTORY_TOKENS = 1_000
 _MAX_HISTORY_MESSAGES = 10
 _MAX_CITATION_CONTENT_CHARS = 700
 _RETRIEVAL_TIMEOUT_SECONDS = 15
 _NEXT_TOKEN_TIMEOUT_SECONDS = 30
-_RERANK_CANDIDATES = 12
-_FINAL_RETRIEVAL_LIMIT = 5
+_RERANK_CANDIDATES = 24
+_FINAL_RETRIEVAL_LIMIT = 10
 _RRF_K = 60
 _RAG_SYSTEM_PROMPT = """
 You are a production RAG assistant operating in HYBRID mode.
 
 Decision policy (apply in order):
-1) Inspect the provided context blocks against the user question.
+1) Inspect the provided context blocks against the user question. Each block
+   is labelled like `[C1]`, `[C2]`, ... at the start of the block.
 2) If the context contains information that materially answers the question:
    - Answer STRICTLY from the context. Do not add outside facts.
    - Set `used_general_knowledge` = false.
    - Set `grounded_in_context` = true.
+   - Populate `cited_indices` with the exact integer indices (e.g. 1, 2)
+     of ONLY the context blocks that materially supported the answer.
+     Do NOT include blocks that are unrelated, off-topic, or only
+     tangentially mention the query terms.
 3) If the context is unrelated to the question OR clearly insufficient:
    - Answer from your own general knowledge.
    - Be helpful, accurate, and concise.
    - Set `used_general_knowledge` = true.
    - Set `grounded_in_context` = false.
+   - Set `cited_indices` to an empty list.
    - Do NOT fabricate citations. Do NOT pretend the answer came from the documents.
 4) Never mix grounded and ungrounded claims silently. Pick one mode per response.
+5) Be strict about `cited_indices`: if a block is irrelevant to the question, do
+   not list it even if it was provided. It is better to cite fewer blocks than
+   to attach unrelated sources.
 
 Output requirements:
 - You MUST return data matching the structured schema exactly.
@@ -94,6 +104,15 @@ class RagStructuredAnswer(BaseModel):
     missing_information: list[str] = Field(
         default_factory=list,
         description="What additional data is needed. Only relevant when grounded.",
+    )
+    cited_indices: list[int] = Field(
+        default_factory=list,
+        description=(
+            "1-based indices of the context blocks (e.g. [C1], [C2], ...) that "
+            "materially supported the answer. Empty when general knowledge was "
+            "used or no block was relevant. NEVER include indices for blocks "
+            "that are unrelated to the user question."
+        ),
     )
 
 
@@ -141,7 +160,7 @@ class RagService:
             # Retrieval spans the full vector store. The uploaded file (if any) is kept
             # only for logging/citation context; it does not restrict the search scope.
             docs, mode = await asyncio.wait_for(
-                self._retrieve(query=normalized_query),
+                self._retrieve(query=normalized_query, preferred_file=file),
                 timeout=_RETRIEVAL_TIMEOUT_SECONDS,
             )
             if await self._is_aborted(should_abort):
@@ -157,6 +176,8 @@ class RagService:
 
             emitted = False
             used_general_knowledge = False
+            grounded_in_context = False
+            cited_indices: list[int] | None = None
             try:
                 structured = await self._invoke_structured_with_abort(
                     messages=messages,
@@ -164,6 +185,8 @@ class RagService:
                 )
                 if structured is not None:
                     used_general_knowledge = bool(structured.used_general_knowledge)
+                    grounded_in_context = bool(structured.grounded_in_context)
+                    cited_indices = list(structured.cited_indices or [])
                     formatted = self._format_structured_answer(structured).strip()
                     if formatted:
                         emitted = True
@@ -183,7 +206,23 @@ class RagService:
             if used_general_knowledge:
                 yield {"type": "citations", "citations": [], "retrieval_mode": "general"}
             else:
-                yield {"type": "citations", "citations": citations, "retrieval_mode": mode}
+                filtered_citations = self._filter_citations_by_indices(
+                    citations,
+                    cited_indices,
+                    grounded_in_context=grounded_in_context,
+                )
+                logger.info(
+                    "Citation filter: retrieved=%d cited_indices=%s grounded=%s emitted=%d",
+                    len(citations),
+                    cited_indices,
+                    grounded_in_context,
+                    len(filtered_citations),
+                )
+                yield {
+                    "type": "citations",
+                    "citations": filtered_citations,
+                    "retrieval_mode": mode,
+                }
         except TimeoutError:
             logger.warning(
                 "Timed out while generating answer",
@@ -203,7 +242,7 @@ class RagService:
             yield {"type": "citations", "citations": [], "retrieval_mode": "none"}
 
     async def _retrieve(
-        self, *, query: str
+        self, *, query: str, preferred_file: str | None = None
     ) -> tuple[list[dict[str, Any]], RetrievalMode]:
         embedding = await asyncio.to_thread(self._embeddings.embed, query)
         candidate_limit = _RERANK_CANDIDATES if self._reranker else _FINAL_RETRIEVAL_LIMIT
@@ -214,7 +253,9 @@ class RagService:
         merged = self._fuse_rankings(vector_docs=vector_docs, keyword_docs=keyword_docs)
         if not merged:
             return [], "none"
+        merged = self._prioritize_same_file_chunks(merged, preferred_file=preferred_file)
         merged = await self._rerank_docs(query=query, docs=merged, limit=_FINAL_RETRIEVAL_LIMIT)
+        merged = self._ensure_each_file_gets_one_chunk(merged, limit=_FINAL_RETRIEVAL_LIMIT)
         await self._enrich(merged)
         mode: RetrievalMode = "hybrid" if vector_docs and keyword_docs else "vector"
         return merged, mode
@@ -313,7 +354,7 @@ class RagService:
             return []
 
         selected: list[dict[str, Any]] = []
-        consumed_chars = 0
+        consumed_tokens = 0
         for item in reversed(chat_history):
             role = item.get("role")
             content = item.get("content")
@@ -325,12 +366,13 @@ class RagService:
             if not normalized:
                 continue
 
-            projected = consumed_chars + len(normalized)
-            if projected > _MAX_HISTORY_CHARS and selected:
+            message_tokens = self._estimate_tokens(normalized)
+            projected = consumed_tokens + message_tokens
+            if projected > _MAX_HISTORY_TOKENS and selected:
                 break
 
             selected.append({"role": role, "content": normalized})
-            consumed_chars = projected
+            consumed_tokens = projected
             if len(selected) >= _MAX_HISTORY_MESSAGES:
                 break
 
@@ -344,31 +386,31 @@ class RagService:
 
     def _build_context(self, docs: list[dict[str, Any]]) -> str:
         parts: list[str] = []
-        seen: set[str] = set()
-        current_size = 0
+        used_tokens = 0
 
         for index, doc in enumerate(docs, start=1):
             text = (doc.get("parent_text") or doc.get("text") or "").strip()
-            if not text or text in seen:
+            if not text:
                 continue
 
             source = doc.get("document_name") or doc.get("file") or "unknown"
             page = doc.get("page_number")
             page_label = f"page {page}" if page is not None else "page unknown"
             block = f"[C{index}] Source: {source} ({page_label})\n{text}"
-
-            candidate_size = current_size + len(block) + (2 if parts else 0)
-            if candidate_size > _MAX_CONTEXT_CHARS:
-                remaining = _MAX_CONTEXT_CHARS - current_size
-                if remaining <= 0:
-                    break
-                block = block[:remaining]
+            block_tokens = self._estimate_tokens(block)
+            if block_tokens <= 0:
+                continue
+            remaining_tokens = _MAX_CONTEXT_TOKENS - used_tokens
+            if remaining_tokens <= 0:
+                break
+            if block_tokens > remaining_tokens:
+                block = self._truncate_to_token_budget(block, token_budget=remaining_tokens)
+                if not block:
+                    continue
                 parts.append(block)
                 break
-
-            seen.add(text)
             parts.append(block)
-            current_size = candidate_size
+            used_tokens += block_tokens
 
         return "\n\n".join(parts)
 
@@ -436,7 +478,9 @@ class RagService:
     @staticmethod
     def _tokenize(text: str) -> set[str]:
         return {
-            token for token in text.lower().replace("\n", " ").split() if len(token) > 2
+            token
+            for token in text.lower().replace("\n", " ").split()
+            if len(token) > 2 and token not in QUERY_STOPWORDS
         }
 
     def _rank(
@@ -450,6 +494,71 @@ class RagService:
             row["score"] = len(query_tokens & text_tokens) if query_tokens else 0
         rows.sort(key=lambda row: row.get("score", 0), reverse=True)
         return rows[:limit]
+
+    @staticmethod
+    def _normalize_file_name(file_name: str | None) -> str:
+        return (file_name or "").strip().lower()
+
+    def _prioritize_same_file_chunks(
+        self, docs: list[dict[str, Any]], *, preferred_file: str | None
+    ) -> list[dict[str, Any]]:
+        target = self._normalize_file_name(preferred_file)
+        if not target:
+            return docs
+        same_file: list[dict[str, Any]] = []
+        others: list[dict[str, Any]] = []
+        for doc in docs:
+            doc_file = self._normalize_file_name(doc.get("file"))
+            if doc_file == target:
+                same_file.append(doc)
+            else:
+                others.append(doc)
+        return same_file + others
+
+    def _ensure_each_file_gets_one_chunk(
+        self, docs: list[dict[str, Any]], *, limit: int
+    ) -> list[dict[str, Any]]:
+        if not docs:
+            return []
+        if limit <= 0:
+            return []
+        file_firsts: list[dict[str, Any]] = []
+        seen_files: set[str] = set()
+        for doc in docs:
+            file_name = self._normalize_file_name(doc.get("file"))
+            if not file_name or file_name in seen_files:
+                continue
+            seen_files.add(file_name)
+            file_firsts.append(doc)
+            if len(file_firsts) >= limit:
+                return file_firsts
+        selected = list(file_firsts)
+        selected_keys = {self._doc_key(doc) for doc in selected}
+        for doc in docs:
+            if len(selected) >= limit:
+                break
+            key = self._doc_key(doc)
+            if key in selected_keys:
+                continue
+            selected.append(doc)
+            selected_keys.add(key)
+        return selected
+
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        # Lightweight approximation: good enough for budget packing decisions.
+        return len(re.findall(r"\S+", text or ""))
+
+    def _truncate_to_token_budget(self, text: str, *, token_budget: int) -> str:
+        if token_budget <= 0:
+            return ""
+        if self._estimate_tokens(text) <= token_budget:
+            return text
+        tokens = re.findall(r"\S+", text)
+        if not tokens:
+            return ""
+        truncated = " ".join(tokens[:token_budget]).strip()
+        return truncated
 
     async def _enrich(self, docs: list[dict[str, Any]]) -> None:
         cache: dict[str, dict[str, Any]] = {}
@@ -493,6 +602,44 @@ class RagService:
             if isinstance(value, str) and value.strip():
                 return value.strip()
         return None
+
+    @staticmethod
+    def _filter_citations_by_indices(
+        citations: list[dict[str, Any]],
+        cited_indices: list[int] | None,
+        *,
+        grounded_in_context: bool,
+    ) -> list[dict[str, Any]]:
+        """Keep only citations the LLM actually relied on.
+
+        ``cited_indices`` are 1-based context-block indices emitted by the
+        structured response. ``None`` means the LLM did not produce structured
+        output (e.g. fallback streaming path) — in that case we preserve the
+        full retrieved set so the user still sees sources.
+
+        Some LLMs (especially smaller models or models with weaker structured-
+        output adherence) may return ``cited_indices=[]`` or values that do
+        not correspond to any real ``citation_id`` even when
+        ``grounded_in_context=True``. Hiding all citations in those cases
+        would mislead the user, so whenever the model claims to be grounded
+        we fall back to the full retrieved set if the index list is empty
+        or fails to match anything. Only return zero citations when the
+        model affirmatively chose not to ground in the provided context.
+        """
+        if cited_indices is None:
+            return citations
+        valid_ids: set[int] = {idx for idx in cited_indices if isinstance(idx, int)}
+        if not valid_ids:
+            return citations if grounded_in_context else []
+        matched = [
+            citation
+            for citation in citations
+            if isinstance(citation.get("citation_id"), int)
+            and citation["citation_id"] in valid_ids
+        ]
+        if not matched and grounded_in_context:
+            return citations
+        return matched
 
     def _build_citations(self, docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         citations: list[dict[str, Any]] = []

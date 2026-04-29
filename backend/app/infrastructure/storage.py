@@ -25,6 +25,10 @@ class DocumentStorage(ABC):
     def public_url(self, filename: str) -> str:
         """Return a URL clients can use to fetch the document."""
 
+    @abstractmethod
+    def read(self, storage_key: str) -> bytes:
+        """Read file content by storage key/path."""
+
 
 class LocalDocumentStorage(DocumentStorage):
     """Persist files on the local filesystem and serve via FastAPI StaticFiles."""
@@ -45,6 +49,9 @@ class LocalDocumentStorage(DocumentStorage):
 
     def public_url(self, filename: str) -> str:
         return f"{self._public_prefix}/{quote(filename)}"
+
+    def read(self, storage_key: str) -> bytes:
+        return Path(storage_key).read_bytes()
 
 
 class SupabaseDocumentStorage(DocumentStorage):
@@ -101,3 +108,24 @@ class SupabaseDocumentStorage(DocumentStorage):
             f"{self._supabase_url}/storage/v1/object/public/"
             f"{quote(self._bucket_name)}/{quote(object_name, safe='/')}"
         )
+
+    def read(self, storage_key: str) -> bytes:
+        object_name = storage_key.strip().replace("\\", "/").lstrip("/")
+        download_url = (
+            f"{self._supabase_url}/storage/v1/object/"
+            f"{quote(self._bucket_name)}/{quote(object_name, safe='/')}"
+        )
+        request = Request(
+            download_url,
+            method="GET",
+            headers={
+                "apikey": self._service_role_key,
+                "Authorization": f"Bearer {self._service_role_key}",
+            },
+        )
+        try:
+            with urlopen(request) as response:
+                return response.read()
+        except HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Supabase download failed ({exc.code}): {body}") from exc

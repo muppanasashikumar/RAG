@@ -11,6 +11,18 @@ from app.infrastructure.mongo import get_mongo_provider
 
 
 class ChatHistoryRepository:
+    async def get_recent_user_messages(self, chat_id: str, *, limit: int = 6) -> list[str]:
+        await get_mongo_provider()
+        if not chat_id:
+            return []
+        rows = (
+            await ChatMessage.find({"chat_id": chat_id, "role": "user"})
+            .sort("-created_at")
+            .limit(max(limit, 1))
+            .to_list()
+        )
+        return [row.content for row in reversed(rows) if isinstance(row.content, str) and row.content.strip()]
+
     async def append_turn(
         self,
         *,

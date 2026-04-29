@@ -241,11 +241,12 @@ export function markUploadStatus<TState extends { uploadStatuses: UploadStatusIt
   set: StoreSetter<TState>,
   fileName: string,
   status: UploadStatusItem["status"],
+  detail?: string,
   error?: string,
 ) {
   set((state) => ({
     uploadStatuses: state.uploadStatuses.map((entry) =>
-      entry.fileName === fileName ? { ...entry, status, error } : entry,
+      entry.fileName === fileName ? { ...entry, status, detail, error } : entry,
     ),
   }) as Partial<TState>);
 }

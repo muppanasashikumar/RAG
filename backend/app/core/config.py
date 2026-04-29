@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_MAX_REQUESTS: int = 120
     RATE_LIMIT_WINDOW_SECONDS: int = 60
+    REDIS_URL: str = "redis://localhost:6379/0"
+    RQ_INGEST_QUEUE_NAME: str = "ingestion"
+    RQ_INGEST_MAX_RETRIES: int = 3
+    RQ_INGEST_RETRY_INTERVALS: str = "10,30,90"
 
     class Config:
         env_file = ".env"

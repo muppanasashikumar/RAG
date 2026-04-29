@@ -52,6 +52,7 @@ type ChatStreamingState = {
 
 const streamManager = new StreamManager();
 const STREAM_READ_TIMEOUT_MS = 20_000;
+const STREAM_ERROR_DEFAULT_MESSAGE = "Something went wrong while streaming the reply.";
 
 function updateAssistantInSession(chatId: string, updater: (message: Message) => Message) {
   const streamSession = streamManager.getSession(chatId);
@@ -191,6 +192,7 @@ export const useChatStreamingStore = create<ChatStreamingState>(() => ({
       let accumulated = "";
       let streamedCitations: Citation[] = [];
       let streamedRetrievalMode: Message["retrievalMode"] | undefined;
+      let backendErrorMessage: string | null = null;
 
       let done = false;
       while (!done) {
@@ -235,6 +237,17 @@ export const useChatStreamingStore = create<ChatStreamingState>(() => ({
               (message) => ({ ...message, content: accumulated }),
             );
           }
+          if (parsed?.type === "error") {
+            backendErrorMessage =
+              typeof parsed.content === "string" && parsed.content.trim()
+                ? parsed.content
+                : typeof (parsed as { message?: unknown }).message === "string" &&
+                    (parsed as { message?: string }).message?.trim()
+                  ? (parsed as { message?: string }).message ?? null
+                  : STREAM_ERROR_DEFAULT_MESSAGE;
+            done = true;
+            break;
+          }
           if (parsed?.type === "citations") {
             streamedCitations = toNormalizedCitations(parsed.citations, fallbackCitation);
             streamedRetrievalMode = normalizeRetrievalMode(parsed.retrieval_mode);
@@ -252,12 +265,27 @@ export const useChatStreamingStore = create<ChatStreamingState>(() => ({
                 serverMessageId: parsed.assistant_message_id,
               }),
             );
+            const llmTitle = typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : null;
+            if (llmTitle) {
+              const nextMessageCount = get().messages.length;
+              useSidebarStore.getState().upsertRecentChat({
+                id: resolvedChatId,
+                title: llmTitle,
+                source: uploadedFileNames[0] || INDEXED_DOCUMENTS_LABEL,
+                updatedAt: toRecentTimestampLabel(),
+                status: "ready",
+                messages: nextMessageCount,
+              });
+            }
           }
         }
       }
 
       const dedupedCitations = dedupeCitations(streamedCitations);
-      const finalContent = accumulated || "Connection lost before receiving a response.";
+      const finalContent =
+        backendErrorMessage ||
+        accumulated ||
+        "Connection lost before receiving a response.";
       set((state) => ({
         messages: state.messages.map((message) =>
           message.id === assistantId
@@ -282,9 +310,10 @@ export const useChatStreamingStore = create<ChatStreamingState>(() => ({
       }));
 
       const nextMessageCount = get().messages.length;
+      const activeTitle = useSidebarStore.getState().activeChat.title;
       useSidebarStore.getState().upsertRecentChat({
         id: resolvedChatId,
-        title: userContent.length > 64 ? `${userContent.slice(0, 64).trimEnd()}...` : userContent,
+        title: activeTitle || (userContent.length > 64 ? `${userContent.slice(0, 64).trimEnd()}...` : userContent),
         source: uploadedFileNames[0] || INDEXED_DOCUMENTS_LABEL,
         updatedAt: toRecentTimestampLabel(),
         status: "ready",

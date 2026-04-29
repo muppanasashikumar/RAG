@@ -13,6 +13,8 @@ from functools import lru_cache
 from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import InvalidTokenError
+from redis import Redis
+from rq import Queue
 
 from app.core.auth import validate_clerk_bearer_token
 from app.core.config import get_documents_dir, settings
@@ -100,6 +102,16 @@ def get_embeddings() -> EmbeddingsClient:
     return get_embeddings_client()
 
 
+@lru_cache(maxsize=1)
+def get_redis_client() -> Redis:
+    return Redis.from_url(settings.REDIS_URL)
+
+
+@lru_cache(maxsize=1)
+def get_ingestion_queue() -> Queue:
+    return Queue(name=settings.RQ_INGEST_QUEUE_NAME, connection=get_redis_client())
+
+
 def get_llm() -> LLMClient:
     return get_llm_client()
 
@@ -114,6 +126,8 @@ def get_ingestion_service() -> IngestionService:
         embeddings=get_embeddings(),
         documents_repository=get_documents_repository(),
         vector_repository=get_vector_repository(),
+        redis_client=get_redis_client(),
+        ingestion_queue=get_ingestion_queue(),
     )
 
 
@@ -128,4 +142,7 @@ def get_rag_service() -> RagService:
 
 
 def get_chat_history_service() -> ChatHistoryService:
-    return ChatHistoryService(repository=get_chat_history_repository())
+    return ChatHistoryService(
+        repository=get_chat_history_repository(),
+        llm=get_llm(),
+    )

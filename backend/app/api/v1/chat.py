@@ -70,14 +70,26 @@ async def chat_stream(
                     mode = event.get("retrieval_mode")
                     retrieval_mode = mode if isinstance(mode, str) else None
                 yield f"data: {json.dumps(event)}\n\n"
+        except Exception:
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "type": "error",
+                        "message": "Unable to stream response right now. Please try again.",
+                    }
+                )
+                + "\n\n"
+            )
         finally:
             await events.aclose()
         if await request.is_disconnected():
             return
         if resolved_chat_id and assistant_content.strip():
-            title = query.strip()
-            if len(title) > 64:
-                title = f"{title[:64].rstrip()}..."
+            title = await history_service.generate_title(
+                chat_id=resolved_chat_id,
+                user_content=query.strip(),
+            )
             source = file_name or "Indexed documents"
             assistant_message_id = await history_service.save_turn(
                 chat_id=resolved_chat_id,
@@ -96,6 +108,7 @@ async def chat_stream(
                             "type": "persisted",
                             "chat_id": resolved_chat_id,
                             "assistant_message_id": assistant_message_id,
+                            "title": title,
                         }
                     )
                     + "\n\n"

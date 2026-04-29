@@ -1,4 +1,10 @@
 services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
   backend:
     image: ${BACKEND_IMAGE}:${IMAGE_TAG:-latest}
     restart: unless-stopped
@@ -6,6 +12,17 @@ services:
       - "8000:8000"
     env_file:
       - .env.production
+    depends_on:
+      - redis
+
+  worker:
+    image: ${BACKEND_IMAGE}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    depends_on:
+      - redis
+    command: ["python", "-m", "app.workers.rq_worker"]
 
   frontend:
     image: ${FRONTEND_IMAGE}:${IMAGE_TAG:-latest}
@@ -17,3 +34,6 @@ services:
     environment:
       BACKEND_API_URL: http://backend:8000
       NEXT_PUBLIC_BACKEND_API_URL: ${NEXT_PUBLIC_BACKEND_API_URL}
+
+volumes:
+  redis_data:
