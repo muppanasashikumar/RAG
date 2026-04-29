@@ -29,6 +29,10 @@ class StoredDocument(Document):
 class VectorChunk(Document):
     file: str
     text: str
+    chunk_level: str | None = None
+    chunk_id: str | None = None
+    parent_id: str | None = None
+    parent_text: str | None = None
     page_number: int | None = None
     document_url: str | None = None
     documentUrl: str | None = None

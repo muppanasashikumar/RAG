@@ -170,6 +170,14 @@ class IngestionService:
                     "text": chunk.page_content,
                     "page_number": page_number if isinstance(page_number, int) else None,
                     "document_url": document_url,
+                    "chunk_level": str(chunk.metadata.get("chunk_level") or "child"),
+                    "chunk_id": chunk.metadata.get("chunk_id"),
+                    "parent_id": chunk.metadata.get("parent_id"),
+                    "parent_text": (
+                        str(chunk.metadata.get("parent_text"))[:_MAX_CHUNK_CHARS]
+                        if chunk.metadata.get("parent_text")
+                        else None
+                    ),
                     "embedding": embedding,
                 }
             )

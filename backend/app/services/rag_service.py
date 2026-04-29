@@ -348,7 +348,7 @@ class RagService:
         current_size = 0
 
         for index, doc in enumerate(docs, start=1):
-            text = (doc.get("text") or "").strip()
+            text = (doc.get("parent_text") or doc.get("text") or "").strip()
             if not text or text in seen:
                 continue
 
@@ -397,6 +397,9 @@ class RagService:
 
     @staticmethod
     def _doc_key(doc: dict[str, Any]) -> str:
+        chunk_id = doc.get("chunk_id")
+        if isinstance(chunk_id, str) and chunk_id:
+            return chunk_id
         file_name = doc.get("file", "")
         page_number = doc.get("page_number", "")
         text = (doc.get("text") or "")[:120]
@@ -497,6 +500,11 @@ class RagService:
             document_name = doc.get("document_name") or doc.get("file", "unknown")
             page_number = doc.get("page_number")
             document_url = self._with_page_anchor(self._pick_url(doc) or "", page_number)
+            citation_text = (
+                doc.get("parent_text")
+                if isinstance(doc.get("parent_text"), str) and doc.get("parent_text")
+                else doc.get("text", "")
+            )
             citations.append(
                 {
                     "citation_id": index,
@@ -504,7 +512,7 @@ class RagService:
                     "source_filename": document_name,
                     "page_number": page_number,
                     "pdf_link_with_page": document_url,
-                    "content": (doc.get("text", "") or "")[:_MAX_CITATION_CONTENT_CHARS],
+                    "content": (citation_text or "")[:_MAX_CITATION_CONTENT_CHARS],
                     "score": doc.get("score"),
                 }
             )
