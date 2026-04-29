@@ -12,8 +12,9 @@ from langchain_core.documents import Document
 from pypdf import PdfReader
 from unstructured.partition.auto import partition
 
+from app.core.config import settings
+
 _MIN_EXTRACTED_CHARS = 200
-_MAX_PARALLEL_EXTRACTION_WORKERS = 2
 _HEADING_CATEGORIES = {"Title", "Header", "Heading"}
 _TABLE_CATEGORIES = {"Table"}
 
@@ -170,12 +171,14 @@ def load_document(file_path: str) -> list[Document]:
     extraction_tasks: list[tuple[str, callable]] = [("unstructured", lambda: _from_unstructured(file_path))]
     if doc_type == "pdf":
         extraction_tasks.append(("pdf_text", lambda: _extract_pdf_text(file_path)))
-        extraction_tasks.append(("ocr", lambda: _from_unstructured(file_path, strategy="hi_res")))
+        if settings.INGEST_ENABLE_HI_RES_OCR:
+            extraction_tasks.append(("ocr", lambda: _from_unstructured(file_path, strategy="hi_res")))
     elif doc_type == "docx":
         extraction_tasks.append(("docx_xml", lambda: _extract_docx_text(file_path)))
 
     candidates: dict[str, list[Document]] = {}
-    with ThreadPoolExecutor(max_workers=min(_MAX_PARALLEL_EXTRACTION_WORKERS, len(extraction_tasks))) as pool:
+    max_workers = max(1, int(settings.DOCUMENT_EXTRACTION_MAX_WORKERS))
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(extraction_tasks))) as pool:
         future_to_name = {pool.submit(task): name for name, task in extraction_tasks}
         for future in as_completed(future_to_name):
             name = future_to_name[future]
