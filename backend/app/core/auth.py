@@ -27,15 +27,18 @@ def validate_clerk_bearer_token(token: str) -> dict[str, Any]:
 
     issuer = (settings.CLERK_ISSUER or "").strip() or None
     audience = (settings.CLERK_AUDIENCE or "").strip() or None
-    signing_key = jwks_client.get_signing_key_from_jwt(token)
-    return jwt.decode(
-        token,
-        signing_key.key,
-        algorithms=["RS256"],
-        issuer=issuer,
-        audience=audience,
-        options={
-            "verify_iss": issuer is not None,
-            "verify_aud": audience is not None,
-        },
-    )
+    try:
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        return jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            issuer=issuer,
+            audience=audience,
+            options={
+                "verify_iss": issuer is not None,
+                "verify_aud": audience is not None,
+            },
+        )
+    except InvalidTokenError as exc:
+        raise InvalidTokenError("Invalid bearer token") from exc

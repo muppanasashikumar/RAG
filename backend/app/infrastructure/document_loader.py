@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import re
-import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from xml.etree import ElementTree
 
+from docx import Document as DocxDocument
 from langchain_core.documents import Document
 from pypdf import PdfReader
+from unstructured.cleaners.core import clean_extra_whitespace
 from unstructured.partition.auto import partition
 
 from app.core.config import settings
@@ -17,6 +18,7 @@ from app.core.config import settings
 _MIN_EXTRACTED_CHARS = 200
 _HEADING_CATEGORIES = {"Title", "Header", "Heading"}
 _TABLE_CATEGORIES = {"Table"}
+logger = logging.getLogger(__name__)
 
 
 def detect_document_type(file_path: str) -> str:
@@ -37,24 +39,21 @@ def detect_document_type(file_path: str) -> str:
 def _normalize_whitespace(text: str) -> str:
     if not text:
         return ""
-    normalized = text.replace("\u00a0", " ")
-    normalized = re.sub(r"[ \t]+", " ", normalized)
+    normalized = clean_extra_whitespace(text.replace("\u00a0", " "))
     normalized = re.sub(r"\n{3,}", "\n\n", normalized)
     return normalized.strip()
 
 
 def _is_table_like(text: str) -> bool:
-    if not text:
-        return False
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if not lines:
-        return False
-    if any("|" in line for line in lines[:6]):
-        return True
-    if sum(1 for line in lines[:8] if "\t" in line) >= 2:
-        return True
-    multi_space_lines = sum(1 for line in lines[:8] if re.search(r"\S\s{2,}\S", line))
-    return multi_space_lines >= 3
+    lines = [line.strip() for line in text.splitlines() if line.strip()][:8]
+    return bool(
+        lines
+        and (
+            any("|" in line for line in lines[:6])
+            or sum("\t" in line for line in lines) >= 2
+            or sum(bool(re.search(r"\S\s{2,}\S", line)) for line in lines) >= 3
+        )
+    )
 
 
 def _from_unstructured(file_path: str, *, strategy: str | None = None) -> list[Document]:
@@ -73,7 +72,34 @@ def _from_unstructured(file_path: str, *, strategy: str | None = None) -> list[D
     if strategy:
         kwargs["strategy"] = strategy
         kwargs["infer_table_structure"] = True
-    elements = partition(**kwargs)
+    logger.info(
+        "Unstructured partition start: file=%s strategy=%s",
+        file_path,
+        strategy or "default",
+    )
+    try:
+        elements = partition(**kwargs)
+    except Exception as exc:
+        logger.exception(
+            "Unstructured partition failed: file=%s strategy=%s error=%s",
+            file_path,
+            strategy or "default",
+            exc,
+        )
+        raise
+    logger.info("Unstructured partition success: element_count=%s", len(elements))
+    for idx, element in enumerate(elements, start=1):
+        metadata = getattr(element, "metadata", None)
+        page_number = getattr(metadata, "page_number", None) if metadata else None
+        category = str(getattr(element, "category", "") or "")
+        text = _normalize_whitespace(str(element))
+        logger.info(
+            "Unstructured element[%s]: category=%s page=%s text=%r",
+            idx,
+            category or "unknown",
+            page_number,
+            text,
+        )
 
     # Use a list of (key, [texts], [section headings], has_table) to preserve order.
     grouped: list[tuple[int | None, list[str], list[str], bool]] = []
@@ -139,14 +165,11 @@ def _from_unstructured(file_path: str, *, strategy: str | None = None) -> list[D
 
 def _extract_docx_text(file_path: str) -> list[Document]:
     try:
-        with zipfile.ZipFile(file_path) as archive:
-            xml_bytes = archive.read("word/document.xml")
+        doc = DocxDocument(file_path)
     except Exception:
         return []
-    root = ElementTree.fromstring(xml_bytes)
-    namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-    texts = [node.text for node in root.findall(".//w:t", namespace) if node.text]
-    merged = _normalize_whitespace("\n".join(chunk.strip() for chunk in texts if chunk.strip()))
+    texts = [paragraph.text for paragraph in doc.paragraphs if paragraph.text and paragraph.text.strip()]
+    merged = _normalize_whitespace("\n".join(texts))
     if not merged:
         return []
     return [Document(page_content=merged, metadata={"page_number": None})]
@@ -174,7 +197,7 @@ def load_document(file_path: str) -> list[Document]:
         if settings.INGEST_ENABLE_HI_RES_OCR:
             extraction_tasks.append(("ocr", lambda: _from_unstructured(file_path, strategy="hi_res")))
     elif doc_type == "docx":
-        extraction_tasks.append(("docx_xml", lambda: _extract_docx_text(file_path)))
+        extraction_tasks.append(("docx_text", lambda: _extract_docx_text(file_path)))
 
     candidates: dict[str, list[Document]] = {}
     max_workers = max(1, int(settings.DOCUMENT_EXTRACTION_MAX_WORKERS))

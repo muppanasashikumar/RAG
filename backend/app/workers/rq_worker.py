@@ -4,11 +4,13 @@ import asyncio
 
 from rq import SimpleWorker
 
+from app.core.logging import configure_logging
 from app.core.dependencies import get_ingestion_queue, get_redis_client
 from app.infrastructure.mongo import initialize_collections
 
 
 def run() -> None:
+    configure_logging()
     asyncio.run(initialize_collections())
     connection = get_redis_client()
     queue = get_ingestion_queue()

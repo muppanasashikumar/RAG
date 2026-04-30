@@ -15,12 +15,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.v1 import router as v1_router
 from app.core.config import settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
-from app.core.rate_limit import RateLimitMiddleware
+from app.core.rate_limit import limiter
 from app.infrastructure.embeddings import get_embeddings_client
 from app.infrastructure.mongo import initialize_collections
 from app.infrastructure.reranker import get_reranker_client
@@ -69,6 +72,7 @@ async def lifespan(_: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="RAG Backend", lifespan=lifespan)
     allowed_origins = _get_allowed_origins()
+    app.state.limiter = limiter
 
     app.add_middleware(
         CORSMiddleware,
@@ -77,18 +81,15 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.add_middleware(
-        RateLimitMiddleware,
-        enabled=settings.RATE_LIMIT_ENABLED,
-        max_requests=settings.RATE_LIMIT_MAX_REQUESTS,
-        window_seconds=settings.RATE_LIMIT_WINDOW_SECONDS,
-    )
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
 
     register_exception_handlers(app)
 
     # Serve only versioned API routes.
     app.include_router(v1_router, prefix="/api/v1")
 
+    @limiter.exempt
     @app.get("/health")
     async def health() -> JSONResponse:
         return JSONResponse(content={"status": "ok"})
