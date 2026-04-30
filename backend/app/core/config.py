@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     RERANKER_ENABLED: bool = False
     RERANKER_MODEL: str = "BAAI/bge-reranker-base"
     LLM_MODEL: str = "openai/gpt-oss-20b"
+    RAG_RETRIEVAL_TIMEOUT_SECONDS: int = 25
+    RAG_NEXT_TOKEN_TIMEOUT_SECONDS: int = 60
     API_AUTH_TOKEN: str | None = None
     CLERK_JWKS_URL: str | None = None
     CLERK_ISSUER: str | None = None

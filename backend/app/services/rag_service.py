@@ -15,6 +15,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from pydantic import BaseModel, Field
 
 from app.domain.models import RetrievalMode
+from app.core.config import settings
 from app.infrastructure.embeddings import EmbeddingsClient
 from app.infrastructure.llm import LLMClient
 from app.infrastructure.reranker import RerankerClient
@@ -29,8 +30,8 @@ _MAX_CONTEXT_TOKENS = 3_000
 _MAX_HISTORY_TOKENS = 1_000
 _MAX_HISTORY_MESSAGES = 10
 _MAX_CITATION_CONTENT_CHARS = 700
-_RETRIEVAL_TIMEOUT_SECONDS = 15
-_NEXT_TOKEN_TIMEOUT_SECONDS = 30
+_RETRIEVAL_TIMEOUT_SECONDS = max(5, int(settings.RAG_RETRIEVAL_TIMEOUT_SECONDS))
+_NEXT_TOKEN_TIMEOUT_SECONDS = max(10, int(settings.RAG_NEXT_TOKEN_TIMEOUT_SECONDS))
 _RERANK_CANDIDATES = 24
 _FINAL_RETRIEVAL_LIMIT = 10
 _RRF_K = 60
